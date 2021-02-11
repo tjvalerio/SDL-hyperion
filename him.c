@@ -123,7 +123,7 @@ static int parse_config_data( struct io_cb *cb_ptr, char *config_string, int cs_
 static int get_socket( int protocol, int port, struct sockaddr_in *sin, int qlen );
 static int return_mss( struct io_cb *cb_ptr, struct packet_hdr *mss );
 static int start_sock_thread( DEVBLK* dev );
-static void* skt_thread( DEVBLK* dev );
+static void* skt_thread( void* dev );
 static void debug_pf( __const char *__restrict __fmt, ... );
 static void dumpdata( char *label, BYTE *data, int len );
 
@@ -198,14 +198,14 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
 static void him_query_device( DEVBLK *dev, char **devclass,
                 int buflen, char *buffer )
 {
+    char  filename[ PATH_MAX + 1 ];     /* full path or just name    */
 
     BEGIN_DEVICE_CLASS_QUERY( "HIM", dev, devclass, buflen, buffer );
 
-    snprintf( buffer, buflen-1, "%s%s%s%s%s IO[%" I64_FMT "u]",
-                dev->filename,
+    snprintf( buffer, buflen-1, "%s%s%s%s IO[%" I64_FMT "u]",
+                filename,
                 (dev->ascii ? " ascii" : " ebcdic"),
                 ((dev->ascii && dev->crlf) ? " crlf" : ""),
-                (dev->notrunc ? " notrunc" : ""),
                 (dev->stopdev    ? " (stopped)"    : ""),
                 dev->excps );
 
@@ -265,8 +265,8 @@ static void him_cpe_device( DEVBLK *dev )
 /* Execute a Channel Command Word                                    */
 /*-------------------------------------------------------------------*/
 static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
-        BYTE chained, U16 count, BYTE prevcode, int ccwseq,
-        BYTE *iobuf, BYTE *more, BYTE *unitstat, U16 *residual )
+        BYTE chained, U32 count, BYTE prevcode, int ccwseq,
+        BYTE *iobuf, BYTE *more, BYTE *unitstat, U32 *residual )
 {
 /* int             rc;                   * Return code               */
 int             i;                      /* Loop counter              */
@@ -729,10 +729,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
 } /* end function him_execute_ccw */
 
 
-#if defined(OPTION_DYNAMIC_LOAD)
-static
-#endif
-DEVHND him_device_hndinfo = {
+static DEVHND him_device_hndinfo = {
         &him_init_handler,             /* Device Initialisation      */
         &him_execute_ccw,              /* Device CCW execute         */
         &him_close_device,             /* Device Close               */
@@ -771,7 +768,6 @@ DEVHND him_device_hndinfo = {
 #endif
 
 
-#if defined(OPTION_DYNAMIC_LOAD)
 HDL_DEPENDENCY_SECTION;
 {
     HDL_DEPENDENCY(HERCULES);
@@ -789,7 +785,6 @@ HDL_DEVICE_SECTION;
     HDL_DEVICE(TCPH, him_device_hndinfo );
 }
 END_DEVICE_SECTION
-#endif
 
  
 /*-------------------------------------------------------------------*/
@@ -1092,10 +1087,11 @@ static int start_sock_thread( DEVBLK* dev )
 /*-------------------------------------------------------------------*/
 /* Thread to monitor our IP socket for incoming data                 */
 /*-------------------------------------------------------------------*/
-static void* skt_thread( DEVBLK* dev )
+static void* skt_thread( void* arg )
 {
     int rc, poll_timer, sleep_timer;
     struct pollfd read_chk;
+    DEVBLK* dev = (DEVBLK *) arg;
 
     /* Fix thread name */
     {
