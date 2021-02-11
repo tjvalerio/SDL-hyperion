@@ -133,36 +133,13 @@ static void dumpdata( char *label, BYTE *data, int len );
 /*-------------------------------------------------------------------*/
 static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
 {
-/* int     i;                              * Array subscript           */
-
     UNREFERENCED( argc );
     UNREFERENCED( argv );
 
-    /* The first argument is the file name *
-    if ( argc == 0 )
-    {
-        WRMSG (HHC01208, "E", SSID_TO_LCSS(dev->ssid), dev->devnum);
-        return -1;
-    }
-
-    if ( strlen(argv[0]) >= sizeof( dev->filename ) )
-    {
-        WRMSG (HHC01201, "E", SSID_TO_LCSS(dev->ssid), dev->devnum, argv[0], (int)sizeof(dev->filename) - 1);
-        return -1;
-    }
-
-    * Save the file name in the device block *
-    hostpath( dev->filename, argv[0], sizeof( dev->filename ) ); */
-
-    /* Initialize device dependent fields *
-    dev->fd = -1;
-    dev->stopdev = FALSE;
-
-    dev->excps = 0;
-
-    if ( !sscanf( dev->typname, "%hx", &(dev->devtype) ) )
-        dev->devtype = 0x3525; */
-
+    /* Should set dev->devtype to something, but what?
+       It must be a hex number equal to an IBM model number. */
+    dev->devtype = 0;
+    
     /* Set length of buffer */
     dev->bufsize = 2048;
 
