@@ -1052,7 +1052,7 @@ static int start_sock_thread( DEVBLK* dev )
 
     ((struct io_cb *)dev->dev_data)->watch_sock = 1;
 
-    rc = create_thread( &tid, DETACHED, skt_thread, dev, NULL );
+    rc = create_thread( &tid, DETACHED, skt_thread, dev, "him_data" );
     if ( rc )
     {
         WRMSG( HHC00102, "E", strerror( rc ) );
