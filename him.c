@@ -112,6 +112,11 @@ struct io_cb {
     unsigned int unused_1   : 1;
     unsigned int unused_2   : 1;
     struct sockaddr_in sin;
+    in_addr_t bind_addr;              /* The address to bind to, may be INADDR_ANY */   
+    in_addr_t our_addr;               /* The address we actually bound to */
+    /* mts_header is the header to be returned to MTS for a packet read 
+       from the net.  THe source address is the remote address and the destination
+       address is MTS's address. */
     struct packet_hdr mts_header;
     enum {EMPTY, CONFIG, MSS, ACK, FIN, FINISHED} read_q[16];
     int max_q, attn_rc[4];
@@ -120,22 +125,24 @@ struct io_cb {
 
 static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data );
 static int parse_config_data( struct io_cb *cb_ptr, char *config_string, int cs_len );
-static int get_socket( int protocol, int port, struct sockaddr_in *sin, int qlen );
+static int get_socket( int protocol, in_addr_t bind_addr, int port, struct sockaddr_in *sin, int qlen );
 static int return_mss( struct io_cb *cb_ptr, struct packet_hdr *mss );
 static int start_sock_thread( DEVBLK* dev );
 static void* skt_thread( void* dev );
 static void debug_pf( __const char *__restrict __fmt, ... );
 static void dumpdata( char *label, BYTE *data, int len );
-
+static void reset_io_cb( struct io_cb *cb_ptr );
 
 /*-------------------------------------------------------------------*/
 /* Initialize the device handler                                     */
 /*-------------------------------------------------------------------*/
 static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
 {
-    UNREFERENCED( argc );
-    UNREFERENCED( argv );
-
+    struct io_cb *cb_ptr;
+    
+    if (argc > 1)
+        return -1;
+        
     /* Should set dev->devtype to something, but what?
        It must be a hex number equal to an IBM model number. */
     dev->devtype = 0;
@@ -156,8 +163,29 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     dev->devid[6] = 0x01;
     dev->numdevid = 7;
 
-    dev->dev_data = malloc( sizeof( struct io_cb ) );
+    dev->dev_data = cb_ptr = malloc( sizeof( struct io_cb ) );
     memset( (char *) dev->dev_data, '\0', sizeof( struct io_cb ) );
+
+    /* The one parameter is the IP address to bind to */
+    if (argc == 1)
+    {
+        struct in_addr addr;
+        if (inet_aton(argv[0], &addr) < 1)
+        {
+            /* "Invalid %s parameter: %s" */
+            WRMSG( HHC02781, "address", argv[1]);
+            return -1;
+        }
+        cb_ptr->bind_addr = addr.s_addr;
+    } 
+    else
+    {
+        /* Bind to any address, will get set to actual address
+           after the bind succeeds */
+        cb_ptr->bind_addr = INADDR_ANY;
+    }
+    /* Not bound yet: */
+    cb_ptr->our_addr = INADDR_ANY;
 
     debug_pf( "Device %s at %04X initialized, version = %s %s\n",
         dev->typname, dev->devnum, __TIME__, __DATE__ );
@@ -175,14 +203,16 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
 static void him_query_device( DEVBLK *dev, char **devclass,
                 int buflen, char *buffer )
 {
+    struct io_cb *cb_ptr = (struct io_cb *)dev->dev_data;
     char  filename[ PATH_MAX + 1 ];     /* full path or just name    */
+    struct in_addr addr;
 
     BEGIN_DEVICE_CLASS_QUERY( "HIM", dev, devclass, buflen, buffer );
+    addr.s_addr = cb_ptr->our_addr;
 
-    snprintf( buffer, buflen-1, "%s%s%s%s IO[%" I64_FMT "u]",
+    snprintf( buffer, buflen-1, "%s %s%s IO[%" I64_FMT "u]",
                 filename,
-                (dev->ascii ? " ascii" : " ebcdic"),
-                ((dev->ascii && dev->crlf) ? " crlf" : ""),
+                inet_ntoa(addr),
                 (dev->stopdev    ? " (stopped)"    : ""),
                 dev->excps );
 
@@ -348,13 +378,21 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
  
             if ( cb_ptr->state == INITIALIZED )
             {
-                cb_ptr->mts_header.ip_header.ip_src = buff_ptr->ip_header.ip_dst;
-                cb_ptr->sin.sin_addr = buff_ptr->ip_header.ip_dst;
+                cb_ptr->mts_header.ip_header.ip_src =
+                    cb_ptr->sin.sin_addr = buff_ptr->ip_header.ip_dst;
                 cb_ptr->mts_header.sh.tcp_header.th_sport =
                     cb_ptr->sin.sin_port = buff_ptr->sh.tcp_header.th_dport;
+/* don't set the dest addr in mts_header, the TCP DSP doesn't 
+   set the source address in the buffer correctly and it's already been set. */
+#if 0
+                cb_ptr->mts_header.ip_header.ip_dst = buff_ptr->ip_header.ip_src;
+                cb_ptr->mts_header.sh.tcp_header.th_dport = 
+                    buff_ptr->sh.tcp_header.th_sport;
+#endif
 
                 if ( connect( cb_ptr->sock,
                     (struct sockaddr *)&cb_ptr->sin, sizeof( struct sockaddr_in ) ) < 0 ) 
+                    /* TODO: If connect fails signal error to MTS */
                     debug_pf( "----- Call to connect, rc = %i\n", errno );
  
                 cb_ptr->state = CONNECTED;
@@ -478,9 +516,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                 memcpy( buff_ptr, &cb_ptr->mts_header, 4 );
                 readlen = 4;
 
-                (void) close( cb_ptr->sock );
-                memset( (char *) cb_ptr, '\0', sizeof( struct io_cb ) );
-                cb_ptr->sock = -1;
+                reset_io_cb(cb_ptr);
 
             default: ;
 
@@ -790,13 +826,7 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
         !parse_config_data( cb_ptr, (char *) &config_data[4], cd_len) )
     {
         (void) close( cb_ptr->sock );
-        memset( (char *) cb_ptr, '\0', sizeof( struct io_cb ) );
-        cb_ptr->sock = -1;
-
-        reply_ptr->him_hdr.init_flag = 1;
-        reply_ptr->him_hdr.buffer_number = 1;
-        reply_ptr->him_hdr.buffer_length = htons( 6 );
-        memcpy( reply_ptr->config_ok, Failed, 6 ); /* EBCDIC "Failed" */
+        goto failed;
     }
     else
     {                              /* Set up socket for non-servers. */
@@ -804,9 +834,15 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
             ( !cb_ptr->passive || cb_ptr->mts_header.sh.tcp_header.th_dport == 0 ) )
         {
             cb_ptr->sock =
-                get_socket( cb_ptr->protocol, cb_ptr->mts_header.sh.tcp_header.th_dport,
+                get_socket( cb_ptr->protocol, cb_ptr->bind_addr,
+                    cb_ptr->mts_header.sh.tcp_header.th_dport,
                     &cb_ptr->sin, cb_ptr->passive ? QLEN : 0 );
+            if (cb_ptr->sock < 0)
+                goto failed;
 
+            /* Save the address we're bound to */
+            cb_ptr->mts_header.ip_header.ip_dst.s_addr = 
+                cb_ptr->our_addr = cb_ptr->sin.sin_addr.s_addr;
             /*  Set the destination port in the MTS header as well   */
             cb_ptr->mts_header.sh.tcp_header.th_dport = cb_ptr->sin.sin_port;
         }
@@ -827,10 +863,30 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
 
         cb_ptr->state = INITIALIZED;
     }
+    return;
+    
+failed:
+    reset_io_cb(cb_ptr);
+
+    reply_ptr->him_hdr.init_flag = 1;
+    reply_ptr->him_hdr.buffer_number = 1;
+    reply_ptr->him_hdr.buffer_length = htons( 6 );
+    memcpy( reply_ptr->config_ok, Failed, 6 ); /* EBCDIC "Failed" */
+    return;
 
 } /* end function config_subchan */
 
- 
+/*-------------------------------------------------------------------*/
+/* This routine resets the HIM data to the intial state              */
+/*-------------------------------------------------------------------*/
+static void reset_io_cb(struct io_cb *cb_ptr) 
+{
+    in_addr_t bind_addr = cb_ptr->bind_addr;
+    (void) close( cb_ptr->sock );
+    memset( (char *) cb_ptr, '\0', sizeof( struct io_cb ) );
+    cb_ptr->sock = -1;
+    cb_ptr->bind_addr = bind_addr;
+}
 /*-------------------------------------------------------------------*/
 /* This routine uses the configuration string that MTS sends to      */
 /* initialize the TCP/IP header in the I/O control block. An example */
@@ -843,7 +899,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
 {
     char *lhs_token, *rhs_token, *echo_rhs = NULL;
     int port, i, j, success = 1;
-    u_int32_t ip_addr = 0, our_ipaddr = 0;
+    in_addr_t ip_addr = INADDR_ANY;
  
     enum lhs_codes {LHS_TYPE, LHS_PROTOCOL, LHS_ACTIVE, LHS_PASSIVE,
                     LHS_LOCALSOCK, LHS_FOREIGNSOCK, LHS_SERVER};
@@ -851,24 +907,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
     static char *lhs_tbl[] = {
         "type",         "protocol",       "active",    "passive",
         "local_socket", "foreign_socket", "server"};
- 
-    {   /* Get our IP address */
-        char host_name[64];
-        struct hostent *hostent_ptr;
-
-        gethostname( host_name, sizeof( host_name ) );
-
-        if ( (hostent_ptr = gethostbyname(host_name)) )
-        {
-            /* our_ipaddr = -970268084; * current ADSL address 76.226.42.198 */
-            our_ipaddr = *(u_int *)hostent_ptr->h_addr;
-            debug_pf( "Our IP address = %08X\n", ntohl( (u_int)our_ipaddr ) );
-        }
-        else
-            debug_pf( "Excuse me?,  What is our IP address?\n" );
-    }
- 
- 
+  
     /*---------------------------------------------------------------*/
     /* Build an MTS TCP/IP header                                    */
     /*---------------------------------------------------------------*/
@@ -882,7 +921,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
     cb_ptr->mts_header.ip_header.ip_id = htons( 1 );
     cb_ptr->mts_header.ip_header.ip_ttl = 58;
     cb_ptr->mts_header.ip_header.ip_p = IPPROTO_TCP;
-    cb_ptr->mts_header.ip_header.ip_dst.s_addr = our_ipaddr;
+    cb_ptr->mts_header.ip_header.ip_dst.s_addr = cb_ptr->our_addr;
 
     cb_ptr->mts_header.sh.tcp_header.th_seq = htonl( 1 );
     cb_ptr->mts_header.sh.tcp_header.th_off = 5;
@@ -936,8 +975,12 @@ static int parse_config_data( struct io_cb *cb_ptr,
  
             if ( i == LHS_LOCALSOCK )     /* Set local socket values */
             {
+                /* use provided address, address we're bound to, or address
+                   requested in device config, whichever is specified. */
                 cb_ptr->mts_header.ip_header.ip_dst.s_addr = 
-                   ( ip_addr != INADDR_ANY ? ip_addr : our_ipaddr );
+                   ip_addr != INADDR_ANY ? ip_addr : 
+                   (cb_ptr->our_addr != INADDR_ANY ? cb_ptr->our_addr :
+                   cb_ptr->bind_addr);
                 cb_ptr->mts_header.sh.tcp_header.th_dport = htons( port );
             }
             else                        /* Set foreign socket values */
@@ -968,11 +1011,12 @@ static int parse_config_data( struct io_cb *cb_ptr,
 /*-------------------------------------------------------------------*/
 /* Get_Socket - allocate & bind a socket using TCP or UDP            */
 /*-------------------------------------------------------------------*/
-static int get_socket( int protocol, int port,
+static int get_socket( int protocol, in_addr_t bind_addr, int port,
     struct sockaddr_in *sin, int qlen )
 {
     /* int protocol;              * protocol to use ("IPPROTO_TCP" or "IPPROTO_UDP") *
        int port;                  * Port number to use or 0 for any port       *
+       in_addr_t bind_addr        * Address to bind ot or INADDR_ANY           * 
        struct sockaddr_in *sin;   * will be returned with assigned port        *
        int qlen;                  * maximum length of the server request queue */
  
@@ -983,7 +1027,7 @@ static int get_socket( int protocol, int port,
     memset( (char *)&our_sin, '\0', sizeof( struct sockaddr_in ) );
     our_sin.sin_family = AF_INET;
     our_sin.sin_port = port;
-    our_sin.sin_addr.s_addr = INADDR_ANY;
+    our_sin.sin_addr.s_addr = bind_addr;
  
     /* Use protocol to choose a socket type */
     socktype = protocol == IPPROTO_UDP ? SOCK_DGRAM : SOCK_STREAM;
@@ -992,25 +1036,40 @@ static int get_socket( int protocol, int port,
     /* Allocate a socket */
     s = socket( PF_INET, socktype, 0 );
     if ( s < 0 )
+    {
         debug_pf( "can't create socket\n" );
+        return -1;
+    }
  
     /* Set REUSEADDR option */
     optval = 4;
     if ( setsockopt( s, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof( optval ) ) < 0 )
+    {    
         debug_pf( "setsockopt\n" );
+        return -1;
+    }
  
     /* Bind the socket */
     if ( bind( s, (struct sockaddr *)&our_sin, sizeof( struct sockaddr_in ) ) < 0 )
+    {
         debug_pf( "can't bind to port\n" );
+        return -1;
+    }
  
     /* Retrieve complete socket info */
     if ( getsockname( s, (struct sockaddr *)&our_sin, &sinlen ) < 0 )
+    {
         debug_pf( "getsockname\n" );
+        return -1;
+    }
     else
         debug_pf( "In get_socket(), port = %d\n", our_sin.sin_port );
  
     if ( socktype == SOCK_STREAM && qlen && listen( s, qlen ) < 0 )
+    {
         debug_pf( "can't listen on port\n" );
+        return -1;
+    }
  
     if ( sin != NULL )
         memcpy( sin, (char *)&our_sin, sizeof( struct sockaddr_in ) );
