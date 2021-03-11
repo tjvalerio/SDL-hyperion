@@ -306,7 +306,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
     /* Process depending on CCW opcode */
     switch( code ) {
 
-    case 0x01:
+    case 0x01:      /* Write_Ccw */
     /*---------------------------------------------------------------*/
     /* WRITE - process data from channel                             */
     /*---------------------------------------------------------------*/
@@ -450,9 +450,8 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
         break;
 
 
-    case 0x02:
-    case 0x06:
-    case 0x0B:
+    case 0x02:      /* Read_Buffer_Ccw */
+    case 0x06:      /* Read_Modified_Ccw (not used) */
     /*---------------------------------------------------------------*/
     /* READ - Send data to channel                                   */
     /*---------------------------------------------------------------*/
@@ -640,9 +639,11 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
         break;
 
 
-    case 0x1B:
+    case 0x0B:      /* Select_Read_Modified_CCw (not used) */
+    case 0x1B:      /* Select_Read_Buffer_Ccw */
+    case 0x4B:      /* Select_Write_Ccw (not used) */
     /*---------------------------------------------------------------*/
-    /* CONTROL                                                       */
+    /* Various select commands whch we ignore                                                     */
     /*---------------------------------------------------------------*/
 
         *residual = 0;
@@ -651,7 +652,6 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
 
 
     case 0x03:
-    case 0x4B:
     /*---------------------------------------------------------------*/
     /* CONTROL NO-OPERATION                                          */
     /*---------------------------------------------------------------*/
