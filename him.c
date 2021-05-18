@@ -23,7 +23,9 @@
 #include "devtype.h"
 
 #define WRITEDBG
-#define ENABLE_TRACING_STMTS 0
+// If ENABLE_TRACING_STMTS is undefiined it will be 
+// set baed on the debug flag, tracing only in a debug build
+//#define ENABLE_TRACING_STMTS 1
 #include "dbgtrace.h"
 
 #define __FAVOR_BSD
