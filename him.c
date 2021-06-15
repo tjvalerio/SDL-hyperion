@@ -101,10 +101,11 @@ struct config_reply {
 /*-------------------------------------------------------------------*/
 /* The I/O control block                                             */
 /*-------------------------------------------------------------------*/
+typedef enum {SHUTDOWN, INITIALIZED, CONNECTED, CLOSING} t_state;
 struct io_cb {
     int sock;
     u_char protocol;
-    enum {SHUTDOWN, INITIALIZED, CONNECTED, CLOSING} state;
+    t_state state;
     unsigned int passive    : 1;     /* Passive port listener        */
     unsigned int server     : 1;     /* Accepting calls on any port  */
     unsigned int rnr        : 1;     /* Read Not Ready flag          */
@@ -124,6 +125,13 @@ struct io_cb {
     int max_q, attn_rc[4];
 };
 
+// Static variabled used by the code that waits for 
+// incoming server connections
+static  LOCK  ServerLock;
+static  int   ServerLockInitialized = FALSE;
+// Number of HIM devices waiting for a server connection
+static  int   ServerCount = 0;
+static  int   ServerThreadRunning = 0;
 
 static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data );
 static int parse_config_data( struct io_cb *cb_ptr, char *config_string, int cs_len );
@@ -135,6 +143,11 @@ static void debug_pf( __const char *__restrict __fmt, ... );
 static void dumpdata( char *label, BYTE *data, int len );
 static void reset_io_cb( struct io_cb *cb_ptr );
 
+static void* sserver_listen_thread( void* arg );
+static int add_server_listener( struct io_cb *cb_ptr );
+static int remove_server_listener( struct io_cb *cb_ptr );
+static void set_state( struct io_cb *cb_ptr, t_state state );
+
 /*-------------------------------------------------------------------*/
 /* Initialize the device handler                                     */
 /*-------------------------------------------------------------------*/
@@ -145,6 +158,24 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     if (argc > 1)
         return -1;
         
+    // Initialize locking for the server data, if necessary.
+    if (!ServerLockInitialized)
+    {
+        ServerLockInitialized = TRUE;
+        initialize_lock( &ServerLock );
+    }
+
+    /* If this is a reinit and the previous incarnation
+       is a server waiting for a call, teminate the wayt. */
+    if ( dev->reinit )
+    {
+        struct io_cb *cb_ptr = (struct io_cb *)dev->dev_data;
+        if ( cb_ptr->state == INITIALIZED &&
+             cb_ptr->server && cb_ptr->sock <= 0 )
+        {
+            remove_server_listener( cb_ptr );
+        }
+    }
     /* Should set dev->devtype to something, but what?
        It must be a hex number equal to an IBM model number. */
     dev->devtype = 0;
@@ -164,6 +195,8 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     dev->devid[5] = dev->devtype & 0xFF;
     dev->devid[6] = 0x01;
     dev->numdevid = 7;
+    
+    dev->himdev   = 1;
 
     dev->dev_data = cb_ptr = malloc( sizeof( struct io_cb ) );
     memset( (char *) dev->dev_data, '\0', sizeof( struct io_cb ) );
@@ -246,7 +279,16 @@ static void him_halt_device( DEVBLK *dev )
 /*-------------------------------------------------------------------*/
 static int him_close_device( DEVBLK *dev )
 {
+    struct io_cb *  cb_ptr;                 /* I/O Control Block pointer */
+
     dev->stopdev = FALSE;
+
+    /* If it is a server waiting for a call, terminate the wait */
+    cb_ptr = (struct io_cb *) dev->dev_data;
+    if ( cb_ptr->server && cb_ptr->passive && cb_ptr->state == INITIALIZED )
+    {
+        remove_server_listener ( cb_ptr );
+    }
 
     /* Free the I/O Control Block */
     free( dev->dev_data );
@@ -397,7 +439,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                     /* TODO: If connect fails signal error to MTS */
                     debug_pf( "----- Call to connect, rc = %i\n", errno );
  
-                cb_ptr->state = CONNECTED;
+                set_state( cb_ptr, CONNECTED );
 
                 /* Queue an MSS acknowledgement */
                 for ( i = 0; cb_ptr->read_q[i] != EMPTY; i++ ) ;
@@ -440,7 +482,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                     {
                         for ( i = 0; cb_ptr->read_q[i] != EMPTY; i++ ) ;
                         cb_ptr->read_q[i] = FIN;
-                        cb_ptr->state = CLOSING;
+                        set_state( cb_ptr, CLOSING );
                     }
 
                     for ( i = 0; cb_ptr->read_q[i] != EMPTY; i++ ) ;
@@ -501,7 +543,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                 buff_ptr->sh.tcp_header.th_flags |= TH_FIN;
 
                 if ( cb_ptr->state == CONNECTED )
-                    cb_ptr->state = CLOSING;
+                    set_state( cb_ptr, CLOSING );
 
                 break;
 
@@ -560,13 +602,14 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             *residual -= readlen + 32;
 
         }
-        else if ( cb_ptr->passive && cb_ptr->state == INITIALIZED )
+        else if ( cb_ptr->passive && !cb_ptr->server &&
+                  cb_ptr->state == INITIALIZED )
         {
             temp_sock = cb_ptr->sock;
             cb_ptr->sock = accept( temp_sock, (struct sockaddr *)&cb_ptr->sin, &sinlen );
  
             (void) close( temp_sock );
-            cb_ptr->state = CONNECTED;
+            set_state( cb_ptr, CONNECTED );
  
             getpeername( cb_ptr->sock, (struct sockaddr *)&cb_ptr->sin, &sinlen );
             cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.sin_addr;
@@ -600,7 +643,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             else if ( readlen == 0 )
             {
                 buff_ptr->sh.tcp_header.th_flags |= TH_FIN;
-                cb_ptr->state = CLOSING;
+                set_state( cb_ptr, CLOSING );
 
                 *residual -= 44;
 
@@ -624,7 +667,10 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             debug_pf( "READ ccw, STATE = %d\n", cb_ptr->state );
         }
 
-        if ( cb_ptr->state != SHUTDOWN && !cb_ptr->watch_sock )
+        /* don't start the socket thread if there is no socket.
+           This happens when starting a server connection. */
+        if ( cb_ptr->state != SHUTDOWN && !cb_ptr->watch_sock &&
+             cb_ptr->sock > 0 )
             start_sock_thread( dev );
 
         /* debug_pf(" chained = %02X, prevcode = %02X, ccwseq = %i\n",
@@ -827,13 +873,13 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
     if ( cb_ptr->state != SHUTDOWN  ||
         !parse_config_data( cb_ptr, (char *) &config_data[4], cd_len) )
     {
-        (void) close( cb_ptr->sock );
+        if ( cb_ptr->sock > 0 )
+            (void) close( cb_ptr->sock );
         goto failed;
     }
     else
     {                              /* Set up socket for non-servers. */
-        if ( !cb_ptr->server &&
-            ( !cb_ptr->passive || cb_ptr->mts_header.sh.tcp_header.th_dport == 0 ) )
+        if ( !cb_ptr->server )
         {
             cb_ptr->sock =
                 get_socket( cb_ptr->protocol, cb_ptr->bind_addr,
@@ -847,6 +893,15 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
                 cb_ptr->our_addr = cb_ptr->sin.sin_addr.s_addr;
             /*  Set the destination port in the MTS header as well   */
             cb_ptr->mts_header.sh.tcp_header.th_dport = cb_ptr->sin.sin_port;
+        }
+        else if ( cb_ptr->server && cb_ptr->passive &&
+                  cb_ptr->mts_header.sh.tcp_header.th_dport == 0 )
+        {
+            // A server listening on port zero
+            if (add_server_listener( cb_ptr ) < 0)
+            {
+                goto failed;
+            }
         }
  
         /* Finish initializing the configuration command reply       */
@@ -863,7 +918,7 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
         /* reply_ptr->local_ip = cb_ptr->mts_header.ip_header.ip_dst; */
         memcpy( reply_ptr->local_ip, &cb_ptr->mts_header.ip_header.ip_dst, 4 );
 
-        cb_ptr->state = INITIALIZED;
+        set_state( cb_ptr, INITIALIZED );
     }
     return;
     
@@ -883,10 +938,16 @@ failed:
 /*-------------------------------------------------------------------*/
 static void reset_io_cb(struct io_cb *cb_ptr) 
 {
+    // If this is a server waiting for a call, terminate the wait
+    if ( cb_ptr->server && cb_ptr->passive && cb_ptr->state == INITIALIZED )
+    {
+        remove_server_listener ( cb_ptr );
+    }
     in_addr_t bind_addr = cb_ptr->bind_addr;
-    (void) close( cb_ptr->sock );
+    if ( cb_ptr->sock > 0 )
+        (void) close( cb_ptr->sock );
     memset( (char *) cb_ptr, '\0', sizeof( struct io_cb ) );
-    cb_ptr->sock = -1;
+    cb_ptr->sock = 0;
     cb_ptr->bind_addr = bind_addr;
 }
 /*-------------------------------------------------------------------*/
@@ -1017,7 +1078,8 @@ static int get_socket( int protocol, in_addr_t bind_addr, int port,
     struct sockaddr_in *sin, int qlen )
 {
     /* int protocol;              * protocol to use ("IPPROTO_TCP" or "IPPROTO_UDP") *
-       int port;                  * Port number to use or 0 for any port       *
+       int port;                  * Port number to use (in net order) or       *
+                                    0 for any port                             *
        in_addr_t bind_addr        * Address to bind ot or INADDR_ANY           * 
        struct sockaddr_in *sin;   * will be returned with assigned port        *
        int qlen;                  * maximum length of the server request queue */
@@ -1181,6 +1243,256 @@ static void* skt_thread( void* arg )
 
 } /* end function skt_thread */
 
+
+/*-------------------------------------------------------------------*/
+/* Increment the count of server devices listening                  */
+/*-------------------------------------------------------------------*/
+static int add_server_listener( struct io_cb *cb_ptr )
+{
+    /* Increment the count of the number of HIM devices waitinh
+       for a server TCP connection and start the listener thread if 
+       it is not running.
+    */
+    
+    TID tid;
+    int rc;
+
+    obtain_lock( &ServerLock );
+    
+    // Increment the count of devices listening
+    ServerCount++;
+    
+    // Start the listener thread if it is not running.
+    if ( !ServerThreadRunning )
+    {
+        /* First one, start the thread to listen for a connection */
+        rc = create_thread( &tid, DETACHED, sserver_listen_thread, 
+                     (void *) cb_ptr, "him_listener" );
+        if ( rc )
+        {
+            release_lock( &ServerLock );
+            WRMSG( HHC00102, "E", strerror( rc ) );
+            return 0;
+        }
+        ServerThreadRunning = 1;
+    }
+    release_lock( &ServerLock );
+    return 1;
+}
+
+/*-------------------------------------------------------------------*/
+/* Change the state of the donnection                                */
+/*-------------------------------------------------------------------*/
+static void set_state( struct io_cb *cb_ptr, t_state state )
+{
+    /* If the this is a server that is listening for a
+       connection let the listener thread know it's gone */
+    if ( cb_ptr->server && cb_ptr->passive &&
+         cb_ptr->state == INITIALIZED && state != INITIALIZED )
+    {
+        remove_server_listener( cb_ptr);
+    }
+    
+    cb_ptr->state = state;
+}
+
+/*-------------------------------------------------------------------*/
+/* Decrement the count of server devices listening                  */
+/*-------------------------------------------------------------------*/
+static int remove_server_listener( struct io_cb *cb_ptr )
+{
+    UNREFERENCED( cb_ptr );
+    
+    /* Decrement the count of HIM devices waiting for a server connection.
+       If the count goes to zero the listener thread will notice and stop.
+    */
+    
+    obtain_lock( &ServerLock );
+    
+    // Decrement the count of devices listening
+    ServerCount--;
+    
+    // Don't let it be less than zero
+    if ( ServerCount < 0 )
+        ServerCount = 0;
+    
+    release_lock( &ServerLock );
+    return 1;
+}
+
+/*-------------------------------------------------------------------*/
+/* Thread to listen for incoming server connections                  */
+/*-------------------------------------------------------------------*/
+static void* sserver_listen_thread( void* arg )
+{   
+    /* Table of ports to listen on.  This should agree with the
+       contents of HOST:SPVT_LCS*SQ on MTS.  This maps port numbers
+       to MTS server names.  If a connection is made on a port not
+       in this table a server named "TCPnnn" will be started. 
+    */
+    #define PORT_COUNT 12
+    u_short ports[PORT_COUNT] = {23, 25, 79, 109, 110, 220, 9998,
+                                 2025, 2026, 2110, 2026, 4242};
+    int sockets[PORT_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    int max_socket = 0;
+    int i;
+    
+    fd_set socket_set;      /* set of sockets to listen on */
+    
+    max_socket = 0;
+    FD_ZERO( &socket_set );
+    for (i=0; i<PORT_COUNT; i++)
+    {
+        int s;
+        struct io_cb *cb_ptr = (struct io_cb *) arg;
+        s = get_socket( IPPROTO_TCP, cb_ptr->bind_addr, htons( ports[i] ),
+                        NULL, QLEN ); 
+        if  ( s<0 )
+        {
+            /* Couldn't get a socket, skip it, a message will have sent */
+            sockets[i] = 0;
+        }
+        else
+        {
+            sockets[i] = s;
+            if ( s>max_socket )
+                max_socket = s;
+            FD_SET( s, &socket_set );
+            /* Make it non-blocking since we don't want to wait while
+               we are holding a lock */
+            socket_set_blocking_mode( s, 0 );
+        }
+    }
+    
+    /* Listen for an incoming connection until there are no more servers */
+    for (;;)
+    {
+        struct timespec slowpoll = { 0, 100000000 };         /* 100ms */
+        fd_set listen_set;
+        int rc;
+        struct io_cb *cb_ptr;
+        
+        /* See if we should quit */
+        obtain_lock( &ServerLock );
+        if ( ServerCount == 0 )
+        {
+            /* We're done, clean up and go home */
+            for (i=0; i<PORT_COUNT; i++)
+            {
+                if ( sockets[i] != 0 )
+                    (void) close( sockets[i] );
+                sockets[i] = 0;
+            }
+            ServerThreadRunning = 0;
+            release_lock( &ServerLock );
+            break;  // and exit
+        }
+        release_lock( &ServerLock );
+    
+        FD_COPY( &socket_set, &listen_set);
+        rc = pselect ( max_socket+1, &listen_set, NULL, NULL, &slowpoll, NULL);
+        
+        if ( rc == 0 )
+            /* Nothing ready */
+            continue;
+            
+        if ( rc < 0)
+        {
+            int select_errno = HSO_errno;
+            // "COMM: pselect() failed: %s"
+            WRMSG( HHC90508, "D", strerror( select_errno ));
+            usleep( 50000 ); // (wait a bit; maybe it'll fix itself??)            
+            continue;
+        }
+        
+        /* See which ports have pending connections */
+        for (i=0; i<PORT_COUNT; i++)
+        {
+            if ( FD_ISSET( sockets[i], &listen_set ))
+            {
+                /* Pending connection, find a HIM device for it */
+                DEVBLK *dev;
+                int csock;
+                struct sockaddr_in our_sin;
+                unsigned int sinlen = sizeof( struct sockaddr_in );
+                
+                for (dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev)
+                {
+                    if (dev->allocated && dev->himdev)
+                    {
+                        /* Seems to be a HIM device, take a closer look. */
+                        if (try_obtain_lock( &dev->lock ))
+                            /* Couldn't lock device, skip it */
+                            continue;
+                        /* Now that it's locked see if it is a server HIM
+                           device waiting for a connection */
+                        cb_ptr = (struct io_cb *) dev->dev_data;
+                        if ( dev->allocated &&
+                             dev->himdev &&
+                             cb_ptr->server &&
+                             cb_ptr->passive &&
+                             cb_ptr->state == INITIALIZED &&
+                             cb_ptr->sock <= 0
+                             )
+                            break;      // from device loop
+                        release_lock( &dev->lock );
+                    }
+                }   // End of device loop
+                if (dev == 0)
+                {
+                    /* couldn't find a device.  This shouldn't happen, but if
+                       it does just try again later. */
+                    usleep( 100000); /* wait 1/10 second */
+                    break;           /* back to the pselect loop */
+                }
+                
+                /* Accept the connection and assign the socket to
+                   the watiing HIM device.  The device is locked. */
+                csock = accept( sockets[i], 
+                                (struct sockaddr *)&cb_ptr->sin, 
+                                &sinlen);
+                if (csock < 0)
+                {
+                    /* accept failed, see why */
+                    int accept_errno = HSO_errno; // (preserve orig errno)
+                    if (EINTR != accept_errno && 
+                        EWOULDBLOCK != accept_errno )
+                    {
+                        // "COMM: accept() failed: %s"
+                        WRMSG( HHC90509, "D", strerror( accept_errno ));
+                        usleep( 100000 );
+                    }
+                    release_lock( &dev->lock );
+                    continue;   // Loop over ports
+                }
+                /* have a connection socket, do something with it */
+                set_state( cb_ptr, CONNECTED );
+                cb_ptr->sock = csock;
+ 
+                // Save the address and port of the remote host
+                cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.sin_addr;
+                cb_ptr->mts_header.sh.tcp_header.th_sport = cb_ptr->sin.sin_port;
+                // Also save the address and port of our end
+                if ( getsockname( csock, (struct sockaddr *)&our_sin, &sinlen ) < 0 )
+                {
+                    debug_pf( "getsockname\n" );
+                }
+                cb_ptr->mts_header.ip_header.ip_dst = our_sin.sin_addr;
+                cb_ptr->mts_header.sh.tcp_header.th_dport = our_sin.sin_port;
+                
+                /* Queue an MSS acknowledgement */
+                for ( i = 0; cb_ptr->read_q[i] != EMPTY; i++ ) ;
+                cb_ptr->read_q[i] = MSS;
+                
+                /* Unlock the device and queue an attention interrupt */
+                release_lock( &dev->lock );
+                rc = device_attention (dev, CSW_ATTN);
+                ((struct io_cb *)dev->dev_data)->attn_rc[rc]++;
+            }
+        }
+    }
+    return 0;
+}
 
 /*-------------------------------------------------------------------*/
 /* Used for dumping debugging data in a formatted hexadecimal form   */
