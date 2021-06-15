@@ -306,9 +306,6 @@ static void him_cpe_device( DEVBLK *dev )
 {
     UNREFERENCED( dev );
 
- /* if ( ((struct io_cb *)dev->dev_data)->state != SHUTDOWN && 
-        !((struct io_cb *)dev->dev_data)->watch_sock )
-            start_sock_thread( dev ); */
 }
 
 
@@ -1217,27 +1214,6 @@ static void* skt_thread( void* arg )
         }
         else
             usleep( sleep_timer );
-
-
-    /* obtain_lock( &dev->lock );
-
-    // PROGRAMMING NOTE: the following tells us whether we detected
-    // the error or if the device thread already did. If the device
-    // thread detected it while we were sleeping (and subsequently
-    // closed the connection) then we don't need to do anything at
-    // all; just exit. If we were the ones that detected the error
-    // however, then we need to close the connection so the device
-    // thread can learn of it...
-
-    if ( dev->fd == fd )
-    {
-        dev->fd = -1;
-        close_socket( fd );
-        WRMSG (HHC01100, "I", SSID_TO_LCSS(dev->ssid), dev->devnum,
-               dev->bs->clientname, dev->bs->clientip, dev->bs->spec);
-    }
-
-    release_lock( &dev->lock ); */
 
     return NULL;
 
