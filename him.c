@@ -1,5 +1,5 @@
-/* HIM.C        (c) Copyright Thomas J. Valerio, 2012                */
-/*              (c) Copyright Michael T. Alexander, 2012             */
+/* HIM.C        (c) Copyright Thomas J. Valerio, 2023                */
+/*              (c) Copyright Michael T. Alexander, 2023             */
 /*              ESA/390 Host Interface Machine Device Handler        */
 /*                                                                   */
 /*   Released under "The Q Public License Version 1"                 */
@@ -28,12 +28,22 @@
 //#define ENABLE_TRACING_STMTS 1
 #include "dbgtrace.h"
 
-#define __FAVOR_BSD
-#include <netinet/ip.h>
-#include <netinet/tcp.h>
-#include <netinet/udp.h>
-
-#include <poll.h>
+#if defined( _MSVC_ )
+  #include "netsupp.h"              // (networking structs and funcs)
+  #define Sin_Addr sin_addr.s_addr
+  #define Ip_Src ip_src
+  #define Ip_Dst ip_dst
+#else // unix/linux
+  #define __FAVOR_BSD
+  #include <netinet/ip.h>
+  #include <netinet/tcp.h>
+  #include <netinet/udp.h>
+  #include <netinet/in.h>
+  #include <poll.h>
+  #define Sin_Addr sin_addr
+  #define Ip_Src ip_src.s_addr
+  #define Ip_Dst ip_dst.s_addr
+#endif
 
 
 /*-------------------------------------------------------------------*/
@@ -50,12 +60,12 @@
 /* appear in memory because this is a little-endian architecture     */
 /*-------------------------------------------------------------------*/
 struct buff_hdr {
-    unsigned int unused         : 3;
-    unsigned int tn3270_flag    : 1;   /* Switch to TN3270 mode      */
-    unsigned int init_flag      : 1;   /* Data is configuration info */
-    unsigned int finished_flag  : 1;   /* Interface disconnect       */
-    unsigned int rnr_flag       : 1;   /* Read-Not-Ready             */
-    unsigned int urgent_flag    : 1;   /* Urgent data to be read     */
+    u_char bh_flags;
+    #define BH_TN3270     0x08         /* Switch to TN3270 mode      */
+    #define BH_INIT       0x10         /* Data is configuration info */
+    #define BH_FINISHED   0x20         /* Interface disconnect       */
+    #define BH_RNR        0x40         /* Read-Not-Ready             */
+    #define BH_URGENT     0x80         /* Urgent data to be read     */
     u_char buffer_number;              /* Sequential buffer number   */
     u_short buffer_length;             /* buffer length              */
 };
@@ -67,6 +77,19 @@ struct buff_hdr {
 /* DSP buffer header defined above, as well as the IP packet header  */
 /* and the TCP and UDP packet headers.                               */
 /*-------------------------------------------------------------------*/
+#if defined( _MSVC_ )
+struct packet_hdr {
+    struct buff_hdr him_hdr;
+    struct ip_hdr ip_header;
+    union {
+        struct tcp_hdr tcp_header;
+        struct udp_hdr udp_header;
+    } sh;
+    u_char tcp_optcode;
+    u_char tcp_optlen;
+    u_short tcp_optval;
+};
+#else // unix/linux
 struct packet_hdr {
     struct buff_hdr him_hdr;
     struct ip ip_header;
@@ -78,6 +101,7 @@ struct packet_hdr {
     u_char tcp_optlen;
     u_short tcp_optval;
 };
+#endif
 
 
 /*-------------------------------------------------------------------*/
@@ -133,9 +157,9 @@ static  int   ServerLockInitialized = FALSE;
 static  int   ServerCount = 0;
 static  int   ServerThreadRunning = 0;
 
-static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data );
+static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data );
 static int parse_config_data( struct io_cb *cb_ptr, char *config_string, int cs_len );
-static int get_socket( int protocol, in_addr_t bind_addr, int port, struct sockaddr_in *sin, int qlen );
+static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port, struct sockaddr_in *sin, int qlen );
 static int return_mss( struct io_cb *cb_ptr, struct packet_hdr *mss );
 static int start_sock_thread( DEVBLK* dev );
 static void* skt_thread( void* dev );
@@ -143,8 +167,15 @@ static void debug_pf( __const char *__restrict __fmt, ... );
 static void dumpdata( char *label, BYTE *data, int len );
 static void reset_io_cb( struct io_cb *cb_ptr );
 
+typedef struct sserver_listen_thread_args
+{
+    DEVBLK*        dev;
+    struct io_cb*  cb_ptr;
+}
+SSLTA;
+
 static void* sserver_listen_thread( void* arg );
-static int add_server_listener( struct io_cb *cb_ptr );
+static int add_server_listener( DEVBLK *dev, struct io_cb *cb_ptr );
 static int remove_server_listener( struct io_cb *cb_ptr );
 static void set_state( struct io_cb *cb_ptr, t_state state );
 
@@ -166,7 +197,7 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     }
 
     /* If this is a reinit and the previous incarnation
-       is a server waiting for a call, teminate the wayt. */
+       is a server waiting for a call, teminate the wait. */
     if ( dev->reinit )
     {
         struct io_cb *cb_ptr = (struct io_cb *)dev->dev_data;
@@ -201,14 +232,14 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     dev->dev_data = cb_ptr = malloc( sizeof( struct io_cb ) );
     memset( (char *) dev->dev_data, '\0', sizeof( struct io_cb ) );
 
-    /* The one parameter is the IP address to bind to */
-    if (argc == 1)
+    /* The first optional parameter is the IP address to bind to */
+    if (argc >= 1)
     {
         struct in_addr addr;
         if (inet_aton(argv[0], &addr) < 1)
         {
             /* "Invalid %s parameter: %s" */
-            WRMSG( HHC02781, "address", argv[1]);
+            WRMSG( HHC02781, "E", "IP address", argv[0]);
             return -1;
         }
         cb_ptr->bind_addr = addr.s_addr;
@@ -219,6 +250,7 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
            after the bind succeeds */
         cb_ptr->bind_addr = INADDR_ANY;
     }
+
     /* Not bound yet: */
     cb_ptr->our_addr = INADDR_ANY;
 
@@ -238,17 +270,17 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
 static void him_query_device( DEVBLK *dev, char **devclass,
                 int buflen, char *buffer )
 {
+    char  filename[ PATH_MAX + 1 + 3 ];
     struct io_cb *cb_ptr = (struct io_cb *)dev->dev_data;
-    char  filename[ PATH_MAX + 1 ];     /* full path or just name    */
     struct in_addr addr;
 
     BEGIN_DEVICE_CLASS_QUERY( "HIM", dev, devclass, buflen, buffer );
+
     addr.s_addr = cb_ptr->our_addr;
 
-    snprintf( buffer, buflen-1, "%s %s%s IO[%" I64_FMT "u]",
-                filename,
+    snprintf( buffer, buflen-1, "%s%s IO[%" I64_FMT "u]",
                 inet_ntoa(addr),
-                (dev->stopdev    ? " (stopped)"    : ""),
+                dev->stopdev    ? " (stopped)" : "",
                 dev->excps );
 
 } /* end function him_query_device */
@@ -259,18 +291,12 @@ static void him_query_device( DEVBLK *dev, char **devclass,
 /*-------------------------------------------------------------------*/
 static void him_halt_device( DEVBLK *dev )
 {
-    {
-        struct timeval tv;
-        char   ts_buf[64];
+    struct timeval tv;
+    char   ts_buf[64];
 
-        gettimeofday( &tv, NULL );
-        strftime( ts_buf, sizeof( ts_buf ), "%H:%M:%S", localtime( &tv.tv_sec ) );
-        debug_pf( " %s.%06d -- devnum %04X HALT\n", ts_buf, tv.tv_usec, dev->devnum );
-    }
-
-    ((struct io_cb *)dev->dev_data)->unused_0 = 1;
-    debug_pf( "---------- Device Halt\n" );
-
+    gettimeofday( &tv, NULL );
+    strftime( ts_buf, sizeof( ts_buf ), "%H:%M:%S", localtime( &tv.tv_sec ) );
+    debug_pf( " %s.%06d -- devnum %04X HALT\n", ts_buf, tv.tv_usec, dev->devnum );
 } /* end function him_halt_device */
 
 
@@ -316,14 +342,13 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
         BYTE chained, U32 count, BYTE prevcode, int ccwseq,
         BYTE *iobuf, BYTE *more, BYTE *unitstat, U32 *residual )
 {
-/* int             rc;                   * Return code               */
-int             i;                      /* Loop counter              */
-int             num;                    /* Number of bytes to move   */
-int             readlen, writelen, temp_sock;
-struct io_cb *  cb_ptr;                 /* I/O Control Block pointer */
-struct packet_hdr *buff_ptr;
-struct pollfd   read_chk;
-unsigned int    sinlen = sizeof( struct sockaddr_in );
+    int    i;                           /* Loop counter              */
+    int    num;                         /* Number of bytes to move   */
+    int    readlen, writelen, temp_sock;
+    struct io_cb *cb_ptr;               /* I/O Control Block pointer */
+    struct packet_hdr *buff_ptr;
+    struct pollfd read_chk;
+    unsigned int sinlen = sizeof( struct sockaddr_in );
 
     UNREFERENCED( flags );
     UNREFERENCED( chained );
@@ -360,13 +385,13 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
         if ( count > 44 && cb_ptr->protocol == IPPROTO_TCP )
             debug_pf( "%.*s\n", count - 44, &((char *) iobuf)[44] );
 
-        if ( buff_ptr->him_hdr.finished_flag )
+        if ( buff_ptr->him_hdr.bh_flags & BH_FINISHED )
         {
             for ( i = 0; cb_ptr->read_q[i] != EMPTY; i++ ) ;
             cb_ptr->read_q[i] = FINISHED;
 
         }
-        else if ( cb_ptr->state == CONNECTED && buff_ptr->him_hdr.rnr_flag )
+        else if ( cb_ptr->state == CONNECTED && buff_ptr->him_hdr.bh_flags & BH_RNR )
         {
             debug_pf( "-----  RNR Flag = ON received.\n" );
 
@@ -375,7 +400,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             *unitstat |= CSW_UX;
 
         }
-        else if ( cb_ptr->rnr && !buff_ptr->him_hdr.rnr_flag )
+        else if ( cb_ptr->rnr && !( buff_ptr->him_hdr.bh_flags & BH_RNR ) )
         {
             debug_pf( "-----  RNR Flag = OFF received.\n" );
 
@@ -383,9 +408,9 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             cb_ptr->rnr = 0;
 
         }
-        else if ( buff_ptr->him_hdr.init_flag )
+        else if ( buff_ptr->him_hdr.bh_flags & BH_INIT )
         {
-            config_subchan( cb_ptr, iobuf );
+            config_subchan( dev, cb_ptr, iobuf );
 
             /* Save the config reply to dev->buf so it will be there for the read ccw */
             readlen = ntohs( buff_ptr->him_hdr.buffer_length ) + sizeof( struct buff_hdr );
@@ -402,12 +427,13 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             if ( ntohs( buff_ptr->him_hdr.buffer_length ) > 4 )
             {
                 cb_ptr->sin.sin_port = buff_ptr->sh.udp_header.uh_dport;
-                cb_ptr->sin.sin_addr = buff_ptr->ip_header.ip_dst;
+                cb_ptr->sin.Sin_Addr = buff_ptr->ip_header.ip_dst;
                 writelen = ntohs( buff_ptr->him_hdr.buffer_length ) - 28;
  
                 if ( sendto( cb_ptr->sock, &((char *) buff_ptr)[32], writelen, 0,
                     (struct sockaddr *)&cb_ptr->sin, sizeof( struct sockaddr_in ) ) < 0 )
-                    debug_pf( "sendto\n" );
+                    // ""%1d:%04X HIM: Error in function %s: %s"
+                    WRMSG( HHC01150, "E", LCSS_DEVNUM, "sendto()", strerror( HSO_errno ));
             }
         }
         else                                 /* must be a TCP packet */
@@ -420,7 +446,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             if ( cb_ptr->state == INITIALIZED )
             {
                 cb_ptr->mts_header.ip_header.ip_src =
-                    cb_ptr->sin.sin_addr = buff_ptr->ip_header.ip_dst;
+                    cb_ptr->sin.Sin_Addr = buff_ptr->ip_header.ip_dst;
                 cb_ptr->mts_header.sh.tcp_header.th_sport =
                     cb_ptr->sin.sin_port = buff_ptr->sh.tcp_header.th_dport;
 /* don't set the dest addr in mts_header, the TCP DSP doesn't 
@@ -434,7 +460,8 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                 if ( connect( cb_ptr->sock,
                     (struct sockaddr *)&cb_ptr->sin, sizeof( struct sockaddr_in ) ) < 0 ) 
                     /* TODO: If connect fails signal error to MTS */
-                    debug_pf( "----- Call to connect, rc = %i\n", errno );
+                    // ""%1d:%04X HIM: Error in function %s: %s"
+                    WRMSG( HHC01150, "E", LCSS_DEVNUM, "connect()", strerror( HSO_errno ));
  
                 set_state( cb_ptr, CONNECTED );
 
@@ -460,7 +487,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                 {
                     if ( cb_ptr->state == CONNECTED )
                     {
-                        i = write( cb_ptr->sock, &((char *) buff_ptr)[offset], writelen );
+                        i = write_socket( cb_ptr->sock, &((char *) buff_ptr)[offset], writelen );
 
                         window = ntohs( cb_ptr->mts_header.sh.tcp_header.th_win );
                         ack_seq = ntohl( cb_ptr->mts_header.sh.tcp_header.th_ack );
@@ -551,7 +578,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                     cb_ptr->attn_rc[1], cb_ptr->attn_rc[2], cb_ptr->attn_rc[3] );
 
                 cb_ptr->mts_header.him_hdr.buffer_number++;
-                cb_ptr->mts_header.him_hdr.finished_flag = 1;
+                cb_ptr->mts_header.him_hdr.bh_flags = BH_FINISHED;
                 cb_ptr->mts_header.him_hdr.buffer_length = 0;
                 memcpy( buff_ptr, &cb_ptr->mts_header, 4 );
                 readlen = 4;
@@ -578,7 +605,6 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
         else if ( !poll(&read_chk, 1, 10) )  /* i.e. no data available from the socket */
         {
             *unitstat |= CSW_UX;
-
         }
         else if ( cb_ptr->protocol == IPPROTO_UDP )
         {
@@ -593,7 +619,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             buff_ptr->him_hdr.buffer_length = 
                 buff_ptr->ip_header.ip_len = htons( readlen + 28 );
 
-            buff_ptr->ip_header.ip_src = cb_ptr->sin.sin_addr;
+            buff_ptr->ip_header.ip_src = cb_ptr->sin.Sin_Addr;
             buff_ptr->sh.udp_header.uh_sport = cb_ptr->sin.sin_port;
 
             *residual -= readlen + 32;
@@ -605,17 +631,16 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             temp_sock = cb_ptr->sock;
             cb_ptr->sock = accept( temp_sock, (struct sockaddr *)&cb_ptr->sin, &sinlen );
  
-            (void) close( temp_sock );
+            (void) close_socket( temp_sock );
             set_state( cb_ptr, CONNECTED );
  
             getpeername( cb_ptr->sock, (struct sockaddr *)&cb_ptr->sin, &sinlen );
-            cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.sin_addr;
+            cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.Sin_Addr;
             cb_ptr->mts_header.sh.tcp_header.th_sport = cb_ptr->sin.sin_port;
 
             *residual -= return_mss( cb_ptr, buff_ptr );
 
             debug_pf( "just accepted call on socket %d for socket %d\n", temp_sock, cb_ptr->sock );
-
         }
         else if ( cb_ptr->state == CONNECTED ) /* A UDP connection will never be in this state */
         {
@@ -625,7 +650,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
             memcpy( buff_ptr, &cb_ptr->mts_header, 44 );
  
             buff_ptr->sh.tcp_header.th_flags |= TH_PUSH;
-            readlen = read( cb_ptr->sock, &((char *) buff_ptr)[44], 1460 );
+            readlen = recv( cb_ptr->sock, &((char *) buff_ptr)[44], 1460, 0 );
  
             if ( readlen > 0 )
             {
@@ -654,7 +679,6 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
                 buff_ptr->sh.tcp_header.th_flags |= TH_RST;
                 *residual -= 44;
                 *unitstat |= CSW_UC;
-
             }
         }
         else
@@ -688,7 +712,7 @@ unsigned int    sinlen = sizeof( struct sockaddr_in );
     case 0x1B:      /* Select_Read_Buffer_Ccw */
     case 0x4B:      /* Select_Write_Ccw (not used) */
     /*---------------------------------------------------------------*/
-    /* Various select commands whch we ignore                                                     */
+    /* Various select commands whch we ignore                        */
     /*---------------------------------------------------------------*/
 
         *residual = 0;
@@ -855,7 +879,7 @@ END_DEVICE_SECTION
 /* This routine uses this information to initialize the subchannel   */
 /* for further use.                                                  */
 /*-------------------------------------------------------------------*/
-static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
+static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data )
 {
     int cd_len;
     struct config_reply *reply_ptr;
@@ -871,7 +895,7 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
         !parse_config_data( cb_ptr, (char *) &config_data[4], cd_len) )
     {
         if ( cb_ptr->sock > 0 )
-            (void) close( cb_ptr->sock );
+            (void) close_socket( cb_ptr->sock );
         goto failed;
     }
     else
@@ -879,14 +903,14 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
         if ( !cb_ptr->server )
         {
             cb_ptr->sock =
-                get_socket( cb_ptr->protocol, cb_ptr->bind_addr,
+                get_socket( dev, cb_ptr->protocol, cb_ptr->bind_addr,
                     cb_ptr->mts_header.sh.tcp_header.th_dport,
                     &cb_ptr->sin, cb_ptr->passive ? QLEN : 0 );
             if (cb_ptr->sock < 0)
                 goto failed;
 
             /* Save the address we're bound to */
-            cb_ptr->mts_header.ip_header.ip_dst.s_addr = 
+            cb_ptr->mts_header.ip_header.Ip_Dst =
                 cb_ptr->our_addr = cb_ptr->sin.sin_addr.s_addr;
             /*  Set the destination port in the MTS header as well   */
             cb_ptr->mts_header.sh.tcp_header.th_dport = cb_ptr->sin.sin_port;
@@ -895,7 +919,7 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
                   cb_ptr->mts_header.sh.tcp_header.th_dport == 0 )
         {
             // A server listening on port zero
-            if (add_server_listener( cb_ptr ) < 0)
+            if (add_server_listener( dev, cb_ptr ) < 0)
             {
                 goto failed;
             }
@@ -903,13 +927,13 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
  
         /* Finish initializing the configuration command reply       */
         memset( (char *) reply_ptr, '\0', sizeof( struct config_reply ) );
-        reply_ptr->him_hdr.init_flag = 1;
+        reply_ptr->him_hdr.bh_flags = BH_INIT;
         reply_ptr->him_hdr.buffer_number = 1;
         reply_ptr->him_hdr.buffer_length =
             htons( sizeof( struct config_reply ) - sizeof( struct buff_hdr ) );
 
         memcpy( reply_ptr->config_ok, Ok, 2 );        /* EBCDIC "Ok" */
-        reply_ptr->family = AF_LOCAL;
+        reply_ptr->family = AF_UNIX;
         reply_ptr->protocol = cb_ptr->protocol;
         reply_ptr->local_port = cb_ptr->mts_header.sh.tcp_header.th_dport;
         /* reply_ptr->local_ip = cb_ptr->mts_header.ip_header.ip_dst; */
@@ -922,7 +946,7 @@ static void config_subchan( struct io_cb *cb_ptr, BYTE *config_data )
 failed:
     reset_io_cb(cb_ptr);
 
-    reply_ptr->him_hdr.init_flag = 1;
+    reply_ptr->him_hdr.bh_flags = BH_INIT;
     reply_ptr->him_hdr.buffer_number = 1;
     reply_ptr->him_hdr.buffer_length = htons( 6 );
     memcpy( reply_ptr->config_ok, Failed, 6 ); /* EBCDIC "Failed" */
@@ -935,14 +959,18 @@ failed:
 /*-------------------------------------------------------------------*/
 static void reset_io_cb(struct io_cb *cb_ptr) 
 {
+    in_addr_t bind_addr;
+
     // If this is a server waiting for a call, terminate the wait
     if ( cb_ptr->server && cb_ptr->passive && cb_ptr->state == INITIALIZED )
     {
         remove_server_listener ( cb_ptr );
     }
-    in_addr_t bind_addr = cb_ptr->bind_addr;
+
+    bind_addr = cb_ptr->bind_addr;
     if ( cb_ptr->sock > 0 )
-        (void) close( cb_ptr->sock );
+        (void) close_socket( cb_ptr->sock );
+
     memset( (char *) cb_ptr, '\0', sizeof( struct io_cb ) );
     cb_ptr->sock = 0;
     cb_ptr->bind_addr = bind_addr;
@@ -957,7 +985,7 @@ static void reset_io_cb(struct io_cb *cb_ptr)
 static int parse_config_data( struct io_cb *cb_ptr,
     char *config_string, int cs_len )
 {
-    char *lhs_token, *rhs_token, *echo_rhs = NULL;
+    char *lhs_token, *rhs_token = NULL, *echo_rhs = NULL;
     int port, i, j, success = 1;
     in_addr_t ip_addr = INADDR_ANY;
  
@@ -981,7 +1009,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
     cb_ptr->mts_header.ip_header.ip_id = htons( 1 );
     cb_ptr->mts_header.ip_header.ip_ttl = 58;
     cb_ptr->mts_header.ip_header.ip_p = IPPROTO_TCP;
-    cb_ptr->mts_header.ip_header.ip_dst.s_addr = cb_ptr->our_addr;
+    cb_ptr->mts_header.ip_header.Ip_Dst = cb_ptr->our_addr;
 
     cb_ptr->mts_header.sh.tcp_header.th_seq = htonl( 1 );
     cb_ptr->mts_header.sh.tcp_header.th_off = 5;
@@ -1037,7 +1065,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
             {
                 /* use provided address, address we're bound to, or address
                    requested in device config, whichever is specified. */
-                cb_ptr->mts_header.ip_header.ip_dst.s_addr = 
+                cb_ptr->mts_header.ip_header.Ip_Dst =
                    ip_addr != INADDR_ANY ? ip_addr : 
                    (cb_ptr->our_addr != INADDR_ANY ? cb_ptr->our_addr :
                    cb_ptr->bind_addr);
@@ -1045,7 +1073,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
             }
             else                        /* Set foreign socket values */
             {
-                cb_ptr->mts_header.ip_header.ip_src.s_addr = ip_addr;
+                cb_ptr->mts_header.ip_header.Ip_Src = ip_addr;
                 cb_ptr->mts_header.sh.tcp_header.th_sport = htons( port );
             }
             break;
@@ -1071,7 +1099,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
 /*-------------------------------------------------------------------*/
 /* Get_Socket - allocate & bind a socket using TCP or UDP            */
 /*-------------------------------------------------------------------*/
-static int get_socket( int protocol, in_addr_t bind_addr, int port,
+static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
     struct sockaddr_in *sin, int qlen )
 {
     /* int protocol;              * protocol to use ("IPPROTO_TCP" or "IPPROTO_UDP") *
@@ -1098,29 +1126,33 @@ static int get_socket( int protocol, in_addr_t bind_addr, int port,
     s = socket( PF_INET, socktype, 0 );
     if ( s < 0 )
     {
-        debug_pf( "can't create socket\n" );
+        // ""%1d:%04X HIM: Error in function %s: %s"
+        WRMSG( HHC01150, "E", LCSS_DEVNUM, "socket()", strerror( HSO_errno ));
         return -1;
     }
  
     /* Set REUSEADDR option */
     optval = 4;
-    if ( setsockopt( s, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof( optval ) ) < 0 )
+    if ( setsockopt( s, SOL_SOCKET, SO_REUSEADDR, (GETSET_SOCKOPT_T*)&optval, sizeof( optval ) ) < 0 )
     {    
-        debug_pf( "setsockopt\n" );
+        // ""%1d:%04X HIM: Error in function %s: %s"
+        WRMSG( HHC01150, "E", LCSS_DEVNUM, "setsockopt()", strerror( HSO_errno ));
         return -1;
     }
  
     /* Bind the socket */
     if ( bind( s, (struct sockaddr *)&our_sin, sizeof( struct sockaddr_in ) ) < 0 )
     {
-        debug_pf( "can't bind to port\n" );
+        // ""%1d:%04X HIM: Error in function %s: %s"
+        WRMSG( HHC01150, "E", LCSS_DEVNUM, "bind()", strerror( HSO_errno ));
         return -1;
     }
  
     /* Retrieve complete socket info */
     if ( getsockname( s, (struct sockaddr *)&our_sin, &sinlen ) < 0 )
     {
-        debug_pf( "getsockname\n" );
+        // ""%1d:%04X HIM: Error in function %s: %s"
+        WRMSG( HHC01150, "E", LCSS_DEVNUM, "getsockname()", strerror( HSO_errno ));
         return -1;
     }
     else
@@ -1128,7 +1160,8 @@ static int get_socket( int protocol, in_addr_t bind_addr, int port,
  
     if ( socktype == SOCK_STREAM && qlen && listen( s, qlen ) < 0 )
     {
-        debug_pf( "can't listen on port\n" );
+        // ""%1d:%04X HIM: Error in function %s: %s"
+        WRMSG( HHC01150, "E", LCSS_DEVNUM, "listen()", strerror( HSO_errno ));
         return -1;
     }
  
@@ -1136,6 +1169,7 @@ static int get_socket( int protocol, in_addr_t bind_addr, int port,
         memcpy( sin, (char *)&our_sin, sizeof( struct sockaddr_in ) );
  
     return s;
+
 } /* end function get_socket */
 
 
@@ -1192,10 +1226,10 @@ static void* skt_thread( void* arg )
 
     /* Fix thread name */
     {
-        char thread_name[32];
+        char thread_name[16];
         thread_name[sizeof( thread_name )-1] = 0;
         snprintf( thread_name, sizeof( thread_name )-1,
-            "skt_thread %1d:%04X", SSID_TO_LCSS(dev->ssid), dev->devnum );
+            "skth_%1d:%04X", SSID_TO_LCSS(dev->ssid), dev->devnum );
         SET_THREAD_NAME( thread_name );
     }
 
@@ -1221,11 +1255,11 @@ static void* skt_thread( void* arg )
 
 
 /*-------------------------------------------------------------------*/
-/* Increment the count of server devices listening                  */
+/* Increment the count of server devices listening                   */
 /*-------------------------------------------------------------------*/
-static int add_server_listener( struct io_cb *cb_ptr )
+static int add_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
 {
-    /* Increment the count of the number of HIM devices waitinh
+    /* Increment the count of the number of HIM devices waiting
        for a server TCP connection and start the listener thread if 
        it is not running.
     */
@@ -1241,13 +1275,20 @@ static int add_server_listener( struct io_cb *cb_ptr )
     // Start the listener thread if it is not running.
     if ( !ServerThreadRunning )
     {
+        SSLTA* sslta = malloc( sizeof( SSLTA ));
+
+        sslta->dev    = dev;
+        sslta->cb_ptr = cb_ptr;
+
         /* First one, start the thread to listen for a connection */
         rc = create_thread( &tid, DETACHED, sserver_listen_thread, 
-                     (void *) cb_ptr, "him_listener" );
+                     sslta, "him_listener" );
         if ( rc )
         {
             release_lock( &ServerLock );
+            // "Error in function create_thread(): %s"
             WRMSG( HHC00102, "E", strerror( rc ) );
+            free( sslta );
             return 0;
         }
         ServerThreadRunning = 1;
@@ -1315,13 +1356,19 @@ static void* sserver_listen_thread( void* arg )
     
     fd_set socket_set;      /* set of sockets to listen on */
     
+    /* Retieve arguments */
+    SSLTA* sslta = arg;
+    DEVBLK *dev           = sslta->dev;
+    struct io_cb *cb_ptr  = sslta->cb_ptr;
+    free( sslta );
+
     max_socket = 0;
     FD_ZERO( &socket_set );
     for (i=0; i<PORT_COUNT; i++)
     {
         int s;
-        struct io_cb *cb_ptr = (struct io_cb *) arg;
-        s = get_socket( IPPROTO_TCP, cb_ptr->bind_addr, htons( ports[i] ),
+        /* struct io_cb *cb_ptr = (struct io_cb *) arg; */
+        s = get_socket( dev, IPPROTO_TCP, cb_ptr->bind_addr, htons( ports[i] ),
                         NULL, QLEN ); 
         if  ( s<0 )
         {
@@ -1356,7 +1403,7 @@ static void* sserver_listen_thread( void* arg )
             for (i=0; i<PORT_COUNT; i++)
             {
                 if ( sockets[i] != 0 )
-                    (void) close( sockets[i] );
+                    (void) close_socket( sockets[i] );
                 sockets[i] = 0;
             }
             ServerThreadRunning = 0;
@@ -1365,7 +1412,7 @@ static void* sserver_listen_thread( void* arg )
         }
         release_lock( &ServerLock );
     
-        FD_COPY( &socket_set, &listen_set);
+        listen_set = socket_set;
         rc = pselect ( max_socket+1, &listen_set, NULL, NULL, &slowpoll, NULL);
         
         if ( rc == 0 )
@@ -1374,9 +1421,8 @@ static void* sserver_listen_thread( void* arg )
             
         if ( rc < 0)
         {
-            int select_errno = HSO_errno;
-            // "COMM: pselect() failed: %s"
-            WRMSG( HHC90508, "D", strerror( select_errno ));
+            // ""%1d:%04X HIM: Error in function %s: %s"
+            WRMSG( HHC01150, "E", LCSS_DEVNUM, "pselect()", strerror( HSO_errno ));
             usleep( 50000 ); // (wait a bit; maybe it'll fix itself??)            
             continue;
         }
@@ -1427,15 +1473,15 @@ static void* sserver_listen_thread( void* arg )
                 csock = accept( sockets[i], 
                                 (struct sockaddr *)&cb_ptr->sin, 
                                 &sinlen);
+
                 if (csock < 0)
                 {
                     /* accept failed, see why */
                     int accept_errno = HSO_errno; // (preserve orig errno)
-                    if (EINTR != accept_errno && 
-                        EWOULDBLOCK != accept_errno )
+                    if (EINTR != accept_errno && HSO_EWOULDBLOCK != accept_errno )
                     {
-                        // "COMM: accept() failed: %s"
-                        WRMSG( HHC90509, "D", strerror( accept_errno ));
+                        // ""%1d:%04X HIM: Error in function %s: %s"
+                        WRMSG( HHC01150, "E", LCSS_DEVNUM, "accept()", strerror( accept_errno ));
                         usleep( 100000 );
                     }
                     release_lock( &dev->lock );
@@ -1446,14 +1492,15 @@ static void* sserver_listen_thread( void* arg )
                 cb_ptr->sock = csock;
  
                 // Save the address and port of the remote host
-                cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.sin_addr;
+                cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.Sin_Addr;
                 cb_ptr->mts_header.sh.tcp_header.th_sport = cb_ptr->sin.sin_port;
                 // Also save the address and port of our end
                 if ( getsockname( csock, (struct sockaddr *)&our_sin, &sinlen ) < 0 )
                 {
-                    debug_pf( "getsockname\n" );
+                    // ""%1d:%04X HIM: Error in function %s: %s"
+                    WRMSG( HHC01150, "W", LCSS_DEVNUM, "getsockname()", strerror( HSO_errno ));
                 }
-                cb_ptr->mts_header.ip_header.ip_dst = our_sin.sin_addr;
+                cb_ptr->mts_header.ip_header.ip_dst = our_sin.Sin_Addr;
                 cb_ptr->mts_header.sh.tcp_header.th_dport = our_sin.sin_port;
                 
                 /* Queue an MSS acknowledgement */
