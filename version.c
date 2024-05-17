@@ -410,6 +410,8 @@ static const char *build_info[] = {
     "Interix Environment"
 #elif defined(sgi) || defined(__sgi)
     "IRIX"
+#elif defined(__linux__)    // non-GNU-based Linuxes do exist
+    "Linux"
 #elif defined(__Lynx__)
     "LynxOS"
 #elif defined(macintosh) || defined(Macintosh) ||                       \
@@ -695,22 +697,35 @@ static const char *build_info[] = {
     "Without Transactional-Execution Facility support",
 #endif
 
-
-
-
-//---------------------------------------------------------------------
-// Fishtest:  log use of certain Research/Workaround build options
-
-#if defined( OPTION_OPTINST )                   // Doesn't really help much!
+#if defined( OPTION_OPTINST )
     "With    \"Optimized\" instructions",
 #else
     "Without \"Optimized\" instructions",
 #endif
+
+
+
+
+//---------------------------------------------------------------------
+// Fishtest:  log 'featall.h' Research/Workaround build options
+
 #if defined( OPTION_USE_SKAIP_AS_LOCK )         // Use SKAIP as lock, not RCP
     "With    OPTION_USE_SKAIP_AS_LOCK",
 #endif
 #if defined( OPTION_SIE2BK_FLD_COPY )           // SIE2BK 'fld' is NOT a mask
     "With    OPTION_SIE2BK_FLD_COPY",
+#endif
+#if defined( OPTION_IODELAY_KLUDGE )            // IODELAY kludge for Linux
+    "With    OPTION_IODELAY_KLUDGE",
+#endif
+#if defined( OPTION_MVS_TELNET_WORKAROUND )     // Handle non-std MVS telnet
+    "With    OPTION_MVS_TELNET_WORKAROUND",
+#endif
+#if defined( OPTION_SIE_PURGE_DAT_ALWAYS )      // Ivan 2016-07-30: purge DAT
+    "With    OPTION_SIE_PURGE_DAT_ALWAYS",
+#endif
+#if defined( OPTION_NOASYNC_SF_CMDS )           // Bypass bug in cache logic
+    "With    OPTION_NOASYNC_SF_CMDS",           // (see GitHub Issue #618!)
 #endif
 
 //---------------------------------------------------------------------

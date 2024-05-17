@@ -1861,7 +1861,7 @@ cpustate_stopping:
                 || !(sysblk.started_mask ^ regs->cpubit)
             )
             {
-                char buf[40];
+                char buf[128];
                 STR_PSW( regs, buf );
 
                 if (regs->insttrace && sysblk.traceFILE)
@@ -1870,6 +1870,10 @@ cpustate_stopping:
                 // "Processor %s%02X: disabled wait state %s"
                 WRMSG( HHC00809, "I", PTYPSTR( regs->cpuad ),
                     regs->cpuad, buf );
+
+                // "Processor %s%02X: processor %sstopped due to disabled wait"
+                WRMSG( HHC00826, "W", PTYPSTR( regs->cpuad ),
+                    regs->cpuad, "auto-" );
             }
             regs->cpustate = CPUSTATE_STOPPING;
             RELEASE_INTLOCK( regs );
@@ -2360,7 +2364,7 @@ int   rc;
     }
 
     /* Set CPU thread priority */
-    set_thread_priority( sysblk.cpuprio);
+    SET_THREAD_PRIORITY( sysblk.cpuprio, sysblk.qos_user_initiated );
 
     /* Display thread started message on control panel */
 

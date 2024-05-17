@@ -1227,6 +1227,10 @@
 							RelativePath=".\xstore.c"
 							>
 						</File>
+						<File
+							RelativePath=".\zvector.c"
+							>
+						</File>
 					</Filter>
 					<Filter
 						Name="Header Files"
@@ -3276,6 +3280,14 @@
 				Name="tests"
 				>
 				<File
+					RelativePath=".\tests\3330.cckd64"
+					>
+				</File>
+				<File
+					RelativePath=".\tests\3380.cckd64"
+					>
+				</File>
+				<File
 					RelativePath=".\tests\3390.cckd64"
 					>
 				</File>
@@ -3285,6 +3297,10 @@
 				</File>
 				<File
 					RelativePath=".\tests\CCWILS.3390-1.comp-z"
+					>
+				</File>
+				<File
+					RelativePath=".\tests\datetime.rexx"
 					>
 				</File>
 				<File
@@ -3483,6 +3499,22 @@
 						>
 					</File>
 					<File
+						RelativePath=".\tests\CU12-01-xpage.core"
+						>
+					</File>
+					<File
+						RelativePath=".\tests\CU12-02-performance.core"
+						>
+					</File>
+					<File
+						RelativePath=".\tests\CU14-01-xpage.core"
+						>
+					</File>
+					<File
+						RelativePath=".\tests\CU14-02-performance.core"
+						>
+					</File>
+					<File
 						RelativePath=".\tests\CUSE-01-basic.core"
 						>
 					</File>
@@ -3519,6 +3551,10 @@
 						>
 					</File>
 					<File
+						RelativePath=".\tests\GH615.core"
+						>
+					</File>
+					<File
 						RelativePath=".\tests\mhi.core"
 						>
 					</File>
@@ -3544,6 +3580,10 @@
 					</File>
 					<File
 						RelativePath=".\tests\semipriv.core"
+						>
+					</File>
+					<File
+						RelativePath=".\tests\ShiftLeft.core"
 						>
 					</File>
 					<File
@@ -4558,6 +4598,22 @@
 							>
 						</File>
 						<File
+							RelativePath=".\tests\CU12-01-xpage.tst"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\CU12-02-performance.tst"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\CU14-01-xpage.tst"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\CU14-02-performance.tst"
+							>
+						</File>
+						<File
 							RelativePath=".\tests\CUSE-01-basic.tst"
 							>
 						</File>
@@ -4587,6 +4643,10 @@
 						</File>
 						<File
 							RelativePath=".\tests\float.tst"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\GH615.tst"
 							>
 						</File>
 						<File
@@ -4691,6 +4751,10 @@
 						</File>
 						<File
 							RelativePath=".\tests\semipriv.tst"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\ShiftLeft.tst"
 							>
 						</File>
 						<File
@@ -5006,6 +5070,22 @@
 							>
 						</File>
 						<File
+							RelativePath=".\tests\CU12-01-xpage.asm"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\CU12-02-performance.asm"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\CU14-01-xpage.asm"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\CU14-02-performance.asm"
+							>
+						</File>
+						<File
 							RelativePath=".\tests\CUSE-01-basic.asm"
 							>
 						</File>
@@ -5046,6 +5126,10 @@
 							>
 						</File>
 						<File
+							RelativePath=".\tests\GH615.asm"
+							>
+						</File>
+						<File
 							RelativePath=".\tests\mhi.asm"
 							>
 						</File>
@@ -5071,6 +5155,10 @@
 						</File>
 						<File
 							RelativePath=".\tests\semipriv.asm"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\ShiftLeft.asm"
 							>
 						</File>
 						<File
@@ -5429,6 +5517,38 @@
 								>
 							</File>
 							<File
+								RelativePath=".\tests\CU12-01-xpage.list"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\CU12-01-xpage.pdf"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\CU12-02-performance.list"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\CU12-02-performance.pdf"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\CU14-01-xpage.list"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\CU14-01-xpage.pdf"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\CU14-02-performance.list"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\CU14-02-performance.pdf"
+								>
+							</File>
+							<File
 								RelativePath=".\tests\CUSE-01-basic.list"
 								>
 							</File>
@@ -5493,6 +5613,14 @@
 								>
 							</File>
 							<File
+								RelativePath=".\tests\GH615.list"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\GH615.pdf"
+								>
+							</File>
+							<File
 								RelativePath=".\tests\mhi.list"
 								>
 							</File>
@@ -5530,6 +5658,14 @@
 							</File>
 							<File
 								RelativePath=".\tests\semipriv.list"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\ShiftLeft.list"
+								>
+							</File>
+							<File
+								RelativePath=".\tests\ShiftLeft.pdf"
 								>
 							</File>
 							<File

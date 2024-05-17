@@ -163,15 +163,19 @@
 #define SR_SYS_MBK              0xace10011
 #define SR_SYS_MBM              0xace10012
 #define SR_SYS_MBD              0xace10013
+
 #define SR_SYS_IOINTQ           0xace10020
 #define SR_SYS_IOPENDING        0xace10021
 #define SR_SYS_PCIPENDING       0xace10022
 #define SR_SYS_ATTNPENDING      0xace10023
+
 #define SR_SYS_IPLED            0xace10030
 #define SR_SYS_CRWCOUNT         0xace10031
 #define SR_SYS_CRWARRAY         0xace10032
 #define SR_SYS_CRWINDEX         0xace10033
 #define SR_SYS_CRWENDIAN        0xace10034
+#define SR_SYS_SFCMD            0xace10035
+
 #define SR_SYS_SERVPARM         0xace10040
 #define SR_SYS_SIGINTREQ        0xace10041
 #define SR_SYS_VMACTIVE         0xace10042
@@ -218,6 +222,7 @@
 #define SR_CPU_GR_13            0xace2002d
 #define SR_CPU_GR_14            0xace2002e
 #define SR_CPU_GR_15            0xace2002f
+
 #define SR_CPU_CR               0xace20040
 #define SR_CPU_CR_0             0xace20040
 #define SR_CPU_CR_1             0xace20041
@@ -235,6 +240,7 @@
 #define SR_CPU_CR_13            0xace2004d
 #define SR_CPU_CR_14            0xace2004e
 #define SR_CPU_CR_15            0xace2004f
+
 #define SR_CPU_AR               0xace20060
 #define SR_CPU_AR_0             0xace20060
 #define SR_CPU_AR_1             0xace20061
@@ -252,39 +258,41 @@
 #define SR_CPU_AR_13            0xace2006d
 #define SR_CPU_AR_14            0xace2006e
 #define SR_CPU_AR_15            0xace2006f
-#define SR_CPU_FPR              0xace20080
-#define SR_CPU_FPR_0            0xace20080
-#define SR_CPU_FPR_1            0xace20081
-#define SR_CPU_FPR_2            0xace20082
-#define SR_CPU_FPR_3            0xace20083
-#define SR_CPU_FPR_4            0xace20084
-#define SR_CPU_FPR_5            0xace20085
-#define SR_CPU_FPR_6            0xace20086
-#define SR_CPU_FPR_7            0xace20087
-#define SR_CPU_FPR_8            0xace20088
-#define SR_CPU_FPR_9            0xace20089
-#define SR_CPU_FPR_10           0xace2008a
-#define SR_CPU_FPR_11           0xace2008b
-#define SR_CPU_FPR_12           0xace2008c
-#define SR_CPU_FPR_13           0xace2008d
-#define SR_CPU_FPR_14           0xace2008e
-#define SR_CPU_FPR_15           0xace2008f
-#define SR_CPU_FPR_16           0xace20090
-#define SR_CPU_FPR_17           0xace20091
-#define SR_CPU_FPR_18           0xace20092
-#define SR_CPU_FPR_19           0xace20093
-#define SR_CPU_FPR_20           0xace20094
-#define SR_CPU_FPR_21           0xace20095
-#define SR_CPU_FPR_22           0xace20096
-#define SR_CPU_FPR_23           0xace20097
-#define SR_CPU_FPR_24           0xace20098
-#define SR_CPU_FPR_25           0xace20099
-#define SR_CPU_FPR_26           0xace2009a
-#define SR_CPU_FPR_27           0xace2009b
-#define SR_CPU_FPR_28           0xace2009c
-#define SR_CPU_FPR_29           0xace2009d
-#define SR_CPU_FPR_30           0xace2009e
-#define SR_CPU_FPR_31           0xace2009f
+
+//  #define SR_CPU_FPR              0xace20080
+//  #define SR_CPU_FPR_0            0xace20080
+//  #define SR_CPU_FPR_1            0xace20081
+//  #define SR_CPU_FPR_2            0xace20082
+//  #define SR_CPU_FPR_3            0xace20083
+//  #define SR_CPU_FPR_4            0xace20084
+//  #define SR_CPU_FPR_5            0xace20085
+//  #define SR_CPU_FPR_6            0xace20086
+//  #define SR_CPU_FPR_7            0xace20087
+//  #define SR_CPU_FPR_8            0xace20088
+//  #define SR_CPU_FPR_9            0xace20089
+//  #define SR_CPU_FPR_10           0xace2008a
+//  #define SR_CPU_FPR_11           0xace2008b
+//  #define SR_CPU_FPR_12           0xace2008c
+//  #define SR_CPU_FPR_13           0xace2008d
+//  #define SR_CPU_FPR_14           0xace2008e
+//  #define SR_CPU_FPR_15           0xace2008f
+//  #define SR_CPU_FPR_16           0xace20090
+//  #define SR_CPU_FPR_17           0xace20091
+//  #define SR_CPU_FPR_18           0xace20092
+//  #define SR_CPU_FPR_19           0xace20093
+//  #define SR_CPU_FPR_20           0xace20094
+//  #define SR_CPU_FPR_21           0xace20095
+//  #define SR_CPU_FPR_22           0xace20096
+//  #define SR_CPU_FPR_23           0xace20097
+//  #define SR_CPU_FPR_24           0xace20098
+//  #define SR_CPU_FPR_25           0xace20099
+//  #define SR_CPU_FPR_26           0xace2009a
+//  #define SR_CPU_FPR_27           0xace2009b
+//  #define SR_CPU_FPR_28           0xace2009c
+//  #define SR_CPU_FPR_29           0xace2009d
+//  #define SR_CPU_FPR_30           0xace2009e
+//  #define SR_CPU_FPR_31           0xace2009f
+
 #define SR_CPU_FPC              0xace20100
 #define SR_CPU_DXC              0xace20101
 #define SR_CPU_MC               0xace20102
@@ -299,6 +307,7 @@
 #define SR_CPU_INTS_MASK        0xace2010b
 #define SR_CPU_EXTCCPU          0xace2010c
 #define SR_CPU_BEAR             0xace2010d
+
 #define SR_CPU_OPNDRID          0xace20110
 #define SR_CPU_CHECKSTOP        0xace20111
 #define SR_CPU_HOSTINT          0xace20112
@@ -312,6 +321,7 @@
 #define SR_CPU_SIGP_INI_RESET   0xace2011a
 #define SR_CPU_VTIMERINT        0xace2011b
 #define SR_CPU_RTIMERINT        0xace2011c
+
 #define SR_CPU_MALFCPU          0xace20120
 #define SR_CPU_MALFCPU_0        0xace20120
 #define SR_CPU_MALFCPU_1        0xace20121
@@ -379,6 +389,58 @@
 #define SR_CPU_EMERCPU_30       0xace2015e
 #define SR_CPU_EMERCPU_31       0xace2015f
 
+#define SR_CPU_VFP_VR           0xace20160
+#define SR_CPU_VFP_VR_0         0xace20160
+#define SR_CPU_VFP_VR_1         0xace20161
+#define SR_CPU_VFP_VR_2         0xace20162
+#define SR_CPU_VFP_VR_3         0xace20163
+#define SR_CPU_VFP_VR_4         0xace20164
+#define SR_CPU_VFP_VR_5         0xace20165
+#define SR_CPU_VFP_VR_6         0xace20166
+#define SR_CPU_VFP_VR_7         0xace20167
+#define SR_CPU_VFP_VR_8         0xace20168
+#define SR_CPU_VFP_VR_9         0xace20169
+#define SR_CPU_VFP_VR_10        0xace2016a
+#define SR_CPU_VFP_VR_11        0xace2016b
+#define SR_CPU_VFP_VR_12        0xace2016c
+#define SR_CPU_VFP_VR_13        0xace2016d
+#define SR_CPU_VFP_VR_14        0xace2016e
+#define SR_CPU_VFP_VR_15        0xace2016f
+#define SR_CPU_VFP_VR_16        0xace20170
+#define SR_CPU_VFP_VR_17        0xace20171
+#define SR_CPU_VFP_VR_18        0xace20172
+#define SR_CPU_VFP_VR_19        0xace20173
+#define SR_CPU_VFP_VR_20        0xace20174
+#define SR_CPU_VFP_VR_21        0xace20175
+#define SR_CPU_VFP_VR_22        0xace20176
+#define SR_CPU_VFP_VR_23        0xace20177
+#define SR_CPU_VFP_VR_24        0xace20178
+#define SR_CPU_VFP_VR_25        0xace20179
+#define SR_CPU_VFP_VR_26        0xace2017a
+#define SR_CPU_VFP_VR_27        0xace2017b
+#define SR_CPU_VFP_VR_28        0xace2017c
+#define SR_CPU_VFP_VR_29        0xace2017d
+#define SR_CPU_VFP_VR_30        0xace2017e
+#define SR_CPU_VFP_VR_31        0xace2017f
+
+#define SR_CPU_VFP_FPR          0xace20180
+#define SR_CPU_VFP_FPR_0        0xace20180
+#define SR_CPU_VFP_FPR_1        0xace20181
+#define SR_CPU_VFP_FPR_2        0xace20182
+#define SR_CPU_VFP_FPR_3        0xace20183
+#define SR_CPU_VFP_FPR_4        0xace20184
+#define SR_CPU_VFP_FPR_5        0xace20185
+#define SR_CPU_VFP_FPR_6        0xace20186
+#define SR_CPU_VFP_FPR_7        0xace20187
+#define SR_CPU_VFP_FPR_8        0xace20188
+#define SR_CPU_VFP_FPR_9        0xace20189
+#define SR_CPU_VFP_FPR_10       0xace2018a
+#define SR_CPU_VFP_FPR_11       0xace2018b
+#define SR_CPU_VFP_FPR_12       0xace2018c
+#define SR_CPU_VFP_FPR_13       0xace2018d
+#define SR_CPU_VFP_FPR_14       0xace2018e
+#define SR_CPU_VFP_FPR_15       0xace2018f
+
 #define SR_DEV                  0xace30000
 #define SR_DEV_DEVTYPE          0xace30001
 #define SR_DEV_ARGC             0xace30002
@@ -389,6 +451,7 @@
   * Channel subsystem support
   */
 #define SR_DEV_LCSS             0xace30005
+
 #define SR_DEV_ORB              0xace30010
 #define SR_DEV_PMCW             0xace30011
 #define SR_DEV_SCSW             0xace30012

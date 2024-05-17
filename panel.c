@@ -77,9 +77,6 @@ static int    NPasgn;                  /* Index to dev being init'ed*/
 static int    NPlastdev;               /* Number of devices         */
 static int    NPcpugraph_ncpu;         /* Number of CPUs to display */
 
-static char  *NPregnum[]   = {" 0"," 1"," 2"," 3"," 4"," 5"," 6"," 7",
-                              " 8"," 9","10","11","12","13","14","15"
-                             };
 static char  *NPregnum64[] = {"0", "1", "2", "3", "4", "5", "6", "7",
                               "8", "9", "A", "B", "C", "D", "E", "F"
                              };
@@ -736,38 +733,21 @@ static void NP_screen_redraw (REGS *regs)
 
         /* Register area */
         set_color (COLOR_LIGHT_GREY, COLOR_BLACK);
-        NPregmode = (regs->arch_mode == ARCH_900_IDX && (NPregdisp == 0 || NPregdisp == 1));
+        NPregmode = (regs->arch_mode == ARCH_900_IDX && (NPregdisp == 0 || NPregdisp ==1 || NPregdisp == 3));
         NPregzhost =
 #if defined(_FEATURE_SIE)
                      (regs->arch_mode != ARCH_900_IDX
                    && SIE_MODE(regs) && HOSTREGS->arch_mode == ARCH_900_IDX
-                   && (NPregdisp == 0 || NPregdisp == 1));
+                   && (NPregdisp == 0 || NPregdisp ==1 || NPregdisp == 3));
 #else
                      0;
 #endif /*defined(_FEATURE_SIE)*/
-        if (NPregmode == 1 || NPregzhost)
+        for (i = 0; i < 8; i++)
         {
-            for (i = 0; i < 8; i++)
-            {
-                set_pos (REGS_LINE+i, 1);
-                draw_text (NPregnum64[i*2]);
-                set_pos (REGS_LINE+i, 20);
-                draw_text (NPregnum64[i*2+1]);
-            }
-        }
-        else
-        {
-            for (i = 0; i < 4; i++)
-            {
-                set_pos (i*2+(REGS_LINE+1),9);
-                draw_text (NPregnum[i*4]);
-                set_pos (i*2+(REGS_LINE+1),18);
-                draw_text (NPregnum[i*4+1]);
-                set_pos (i*2+(REGS_LINE+1),27);
-                draw_text (NPregnum[i*4+2]);
-                set_pos (i*2+(REGS_LINE+1),36);
-                draw_text (NPregnum[i*4+3]);
-            }
+            set_pos (REGS_LINE+i, 1);
+            draw_text (NPregnum64[i*2]);
+            set_pos (REGS_LINE+i, 20);
+            draw_text (NPregnum64[i*2+1]);
         }
 
         /* Register selection */
@@ -1079,12 +1059,12 @@ static void NP_update(REGS *regs)
         }
 
         /* Redraw the register template if the regmode switched */
-        mode = (regs->arch_mode == ARCH_900_IDX && (NPregdisp == 0 || NPregdisp == 1));
+        mode = (regs->arch_mode == ARCH_900_IDX && (NPregdisp == 0 || NPregdisp ==1 || NPregdisp == 3));
         zhost =
 #if defined(_FEATURE_SIE)
                 (regs->arch_mode != ARCH_900_IDX
               && SIE_MODE(regs) && HOSTREGS->arch_mode == ARCH_900_IDX
-              && (NPregdisp == 0 || NPregdisp == 1));
+              && (NPregdisp == 0 || NPregdisp ==1 || NPregdisp == 3));
 #else // !defined(_FEATURE_SIE)
                      0;
 #endif /*defined(_FEATURE_SIE)*/
@@ -1094,149 +1074,124 @@ static void NP_update(REGS *regs)
             NPregzhost = zhost;
             NPregs_valid = 0;
             set_color (COLOR_LIGHT_GREY, COLOR_BLACK);
-            if (NPregmode || NPregzhost)
-            {
-                /* 64 bit registers */
-                for (i = 0; i < 8; i++)
-                {
-                    set_pos (REGS_LINE+i, 1);
-                    fill_text (' ', 38);
-                    set_pos (REGS_LINE+i, 1);
-                    draw_text (NPregnum64[i*2]);
-                    set_pos (REGS_LINE+i, 20);
-                    draw_text (NPregnum64[i*2+1]);
-                }
-            }
-            else
-            {
-                /* 32 bit registers */
-                for (i = 0; i < 4; i++)
-                {
-                    set_pos (i*2+REGS_LINE,1);
-                    fill_text (' ', 38);
-                    set_pos (i*2+(REGS_LINE+1),1);
-                    fill_text (' ', 38);
-                    set_pos (i*2+(REGS_LINE+1),9);
-                    draw_text (NPregnum[i*4]);
-                    set_pos (i*2+(REGS_LINE+1),18);
-                    draw_text (NPregnum[i*4+1]);
-                    set_pos (i*2+(REGS_LINE+1),27);
-                    draw_text (NPregnum[i*4+2]);
-                    set_pos (i*2+(REGS_LINE+1),36);
-                    draw_text (NPregnum[i*4+3]);
-                }
-            }
         }
 
-        /* Display register values */
+        /* Display register values (or storage) i*/
         set_color (COLOR_LIGHT_YELLOW, COLOR_BLACK );
-        if (NPregmode)
+        addr = NPaddress;
+        for (i = 0; i < 16; i++)
         {
-            /* 64 bit registers */
-            for (i = 0; i < 16; i++)
-            {
-                switch (NPregdisp) {
-                case 0:
+            set_pos (REGS_LINE + i/2, 3 + (i%2)*19);
+            switch (NPregdisp) {
+            default:
+            case 0:  /* General Purpose Registers */
+                if (NPregmode)
+                {
+                    /* 64 bit register */
                     if (!NPregs_valid || NPregs64[i] != regs->GR_G(i))
                     {
-                        set_pos (REGS_LINE + i/2, 3 + (i%2)*19);
                         draw_dw (regs->GR_G(i));
                         NPregs64[i] = regs->GR_G(i);
                     }
-                    break;
-                case 1:
+                }
+                else if (NPregzhost)
+                {
+                    /* 32 bit register on 64 bit template */
+                    if (!NPregs_valid || NPregs[i] != regs->GR_L(i))
+                    {
+                        draw_text("--------");
+                        draw_fw (regs->GR_L(i));
+                        NPregs[i] = regs->GR_L(i);
+                    }
+                }
+                else
+                {
+                    /* 32 bit register */
+                    if (!NPregs_valid || NPregs[i] != regs->GR_L(i))
+                    {
+                        draw_fw (regs->GR_L(i));
+                        draw_text("        ");
+                        NPregs[i] = regs->GR_L(i);
+                    }
+                }
+                break;
+            case 1:  /* Control Registers */
+                if (NPregmode)
+                {
+                    /* 64 bit register */
                     if (!NPregs_valid || NPregs64[i] != regs->CR_G(i))
                     {
-                        set_pos (REGS_LINE + i/2, 3 + (i%2)*19);
                         draw_dw (regs->CR_G(i));
                         NPregs64[i] = regs->CR_G(i);
                     }
-                    break;
                 }
-            }
-        }
-        else if (NPregzhost)
-        {
-            /* 32 bit registers on 64 bit template */
-            for (i = 0; i < 16; i++)
-            {
-                switch (NPregdisp) {
-                case 0:
-                    if (!NPregs_valid || NPregs[i] != regs->GR_L(i))
-                    {
-                        set_pos (REGS_LINE + i/2, 3 + (i%2)*19);
-//                      draw_fw (0);
-                        draw_text("--------");
-                        draw_fw (regs->GR_L(i));
-                        NPregs[i] = regs->GR_L(i);
-                    }
-                    break;
-                case 1:
+                else if (NPregzhost)
+                {
+                    /* 32 bit register on 64 bit template */
                     if (!NPregs_valid || NPregs[i] != regs->CR_L(i))
                     {
-                        set_pos (REGS_LINE + i/2, 3 + (i%2)*19);
-//                      draw_fw (0);
                         draw_text("--------");
                         draw_fw (regs->CR_L(i));
                         NPregs[i] = regs->CR_L(i);
                     }
-                    break;
                 }
-            }
-        }
-        else
-        {
-            /* 32 bit registers */
-            addr = NPaddress;
-            for (i = 0; i < 16; i++)
-            {
-                switch (NPregdisp) {
-                default:
-                case 0:
-                    if (!NPregs_valid || NPregs[i] != regs->GR_L(i))
-                    {
-                        set_pos (REGS_LINE + (i/4)*2, 3 + (i%4)*9);
-                        draw_fw (regs->GR_L(i));
-                        NPregs[i] = regs->GR_L(i);
-                    }
-                    break;
-                case 1:
+                else
+                {
+                    /* 32 bit register */
                     if (!NPregs_valid || NPregs[i] != regs->CR_L(i))
                     {
-                        set_pos (REGS_LINE + (i/4)*2, 3 + (i%4)*9);
                         draw_fw (regs->CR_L(i));
+                        draw_text("        ");
                         NPregs[i] = regs->CR_L(i);
                     }
-                    break;
-                case 2:
-                    if (!NPregs_valid || NPregs[i] != regs->AR(i))
+                }
+                break;
+            case 2:  /* Access Registers */
+                /* 32 bit register */
+                if (!NPregs_valid || NPregs[i] != regs->AR(i))
+                {
+                    draw_fw (regs->AR(i));
+                    draw_text("        ");
+                    NPregs[i] = regs->AR(i);
+                }
+                break;
+            case 3:  /* Floating Point Registers */
+                /* 64 bit register */
+                if (!NPregs_valid || NPregs64[i] != regs->FPR_L(i))
+                {
+                    if (NPregmode || NPregzhost)
                     {
-                        set_pos (REGS_LINE + (i/4)*2, 3 + (i%4)*9);
-                        draw_fw (regs->AR(i));
-                        NPregs[i] = regs->AR(i);
+                        draw_dw (regs->FPR_L(i));
                     }
-                    break;
-                case 3:
-                    if (!NPregs_valid || NPregs[i] != regs->fpr[i])
+                    else
                     {
-                        set_pos (REGS_LINE + (i/4)*2, 3 + (i%4)*9);
-                        draw_fw (regs->fpr[i]);
-                        NPregs[i] = regs->fpr[i];
+                        if (i < 8 && !(i & 1))
+                        {
+                            draw_dw (regs->FPR_L(i));
+                        }
+                        else
+                        {
+                            draw_text("                ");
+                        }
                     }
-                    break;
-                case 4:
-                    aaddr = APPLY_PREFIXING (addr, regs->PX);
-                    addr += 4;
-                    if (aaddr + 3 > regs->mainlim)
-                        break;
-                    if (!NPregs_valid || NPregs[i] != fetch_fw(regs->mainstor + aaddr))
-                    {
-                        set_pos (REGS_LINE + (i/4)*2, 3 + (i%4)*9);
-                        draw_fw (fetch_fw(regs->mainstor + aaddr));
-                        NPregs[i] = fetch_fw(regs->mainstor + aaddr);
-                    }
+                    NPregs64[i] = regs->FPR_L(i);
+                }
+
+                break;
+            case 4:  /* Storage */
+                aaddr = APPLY_PREFIXING (addr, regs->PX);
+                addr += 8;
+                if (aaddr + 7 > regs->mainlim)
+                {
+                    draw_text("                ");
                     break;
                 }
+                if (!NPregs_valid || NPregs64[i] != fetch_dw(regs->mainstor + aaddr))
+                {
+                    draw_dw (fetch_dw(regs->mainstor + aaddr));
+                    NPregs64[i] = fetch_dw(regs->mainstor + aaddr);
+                }
+                break;
             }
         }
 
@@ -1618,12 +1573,16 @@ DLL_EXPORT void set_panel_colors()
         sysblk.pan_color[ PANC_E_IDX ][ PANC_FG_IDX ] = COLOR_DEFAULT_FG;
         sysblk.pan_color[ PANC_W_IDX ][ PANC_FG_IDX ] = COLOR_DEFAULT_FG;
         sysblk.pan_color[ PANC_D_IDX ][ PANC_FG_IDX ] = COLOR_DEFAULT_FG;
+        sysblk.pan_color[ PANC_S_IDX ][ PANC_FG_IDX ] = COLOR_DEFAULT_FG;
+        sysblk.pan_color[ PANC_A_IDX ][ PANC_FG_IDX ] = COLOR_DEFAULT_FG;
 
         sysblk.pan_color[ PANC_X_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
         sysblk.pan_color[ PANC_I_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
         sysblk.pan_color[ PANC_E_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
         sysblk.pan_color[ PANC_W_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
         sysblk.pan_color[ PANC_D_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
+        sysblk.pan_color[ PANC_S_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
+        sysblk.pan_color[ PANC_A_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
 
         break;
 
@@ -1644,6 +1603,12 @@ DLL_EXPORT void set_panel_colors()
         sysblk.pan_color[ PANC_D_IDX ][ PANC_FG_IDX ] = COLOR_LIGHT_GREY;
         sysblk.pan_color[ PANC_D_IDX ][ PANC_BG_IDX ] = COLOR_BLUE;
 
+        sysblk.pan_color[ PANC_S_IDX ][ PANC_FG_IDX ] = COLOR_WHITE;
+        sysblk.pan_color[ PANC_S_IDX ][ PANC_BG_IDX ] = COLOR_LIGHT_RED;
+
+        sysblk.pan_color[ PANC_A_IDX ][ PANC_FG_IDX ] = COLOR_WHITE;
+        sysblk.pan_color[ PANC_A_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
+
         break;
 
     case PANC_LIGHT:  // Light scheme: dark text on light background
@@ -1663,6 +1628,12 @@ DLL_EXPORT void set_panel_colors()
         sysblk.pan_color[ PANC_D_IDX ][ PANC_FG_IDX ] = COLOR_LIGHT_GREY;
         sysblk.pan_color[ PANC_D_IDX ][ PANC_BG_IDX ] = COLOR_BLUE;
 
+        sysblk.pan_color[ PANC_S_IDX ][ PANC_FG_IDX ] = COLOR_WHITE;
+        sysblk.pan_color[ PANC_S_IDX ][ PANC_BG_IDX ] = COLOR_LIGHT_RED;
+
+        sysblk.pan_color[ PANC_A_IDX ][ PANC_FG_IDX ] = COLOR_DARK_GREY;
+        sysblk.pan_color[ PANC_A_IDX ][ PANC_BG_IDX ] = COLOR_DEFAULT_BG;
+
         break;
     }
 }
@@ -1676,7 +1647,9 @@ static int msgcolor( int sev, int fgbg )
     case 'I': return sysblk.pan_color[ PANC_I_IDX ][ fgbg ];
     case 'E': return sysblk.pan_color[ PANC_E_IDX ][ fgbg ];
     case 'W': return sysblk.pan_color[ PANC_W_IDX ][ fgbg ];
-    case 'D': return sysblk.pan_color[ PANC_D_IDX ][ fgbg ]; default: break; }
+    case 'D': return sysblk.pan_color[ PANC_D_IDX ][ fgbg ];
+    case 'S': return sysblk.pan_color[ PANC_S_IDX ][ fgbg ];
+    case 'A': return sysblk.pan_color[ PANC_A_IDX ][ fgbg ]; default: break; }
               return sysblk.pan_color[ PANC_X_IDX ][ fgbg ];
 }
 static int fg_msgcolor( int sev ) { return msgcolor( sev, PANC_FG_IDX ); }
@@ -1763,7 +1736,11 @@ char    buf[1024];                      /* Buffer workarea           */
 size_t  loopcount;                      /* Number of iterations done */
 
     SET_THREAD_NAME( PANEL_THREAD_NAME );
-    hdl_addshut( "panel_cleanup", panel_cleanup, NULL );
+
+    // In order to synchronize shutdown across panel and logger,
+    // panel cleanup is now handled directly in the panel thread.
+    //hdl_addshut( "panel_cleanup", panel_cleanup, NULL );
+
     history_init();
 
 #if defined(HAVE_REGEX_H) || defined(HAVE_PCRE)
@@ -2949,8 +2926,9 @@ FinishShutdown:
         /* Don't read or otherwise process any input
            once system shutdown has been initiated
         */
-        if ( sysblk.shutdown )
+        if ( sysblk.shutbegin )
         {
+            if ( sysblk.panel_init ) panel_cleanup ( NULL );
             if ( sysblk.shutfini ) break;
             /* wait for system to finish shutting down */
             USLEEP(10000);
@@ -3316,6 +3294,21 @@ FinishShutdown:
 
 } /* end function panel_display */
 
+/* write spaces over the whole pane and set position to top left */
+static void blank_panel()
+{
+    char blanks[MSG_SIZE];
+    int i = 0;
+
+    memset(blanks, ' ' , MSG_SIZE);
+    for (i=1; i <= cons_rows; i++)
+    {
+        set_pos(i,1);
+        write_text(blanks, MSG_SIZE);
+    }
+    set_pos(1,1);
+}
+
 static void panel_cleanup(void *unused)
 {
 int i;
@@ -3328,7 +3321,10 @@ PANMSG* p;
     if(topmsg)
     {
         set_screen_color( stderr, COLOR_DEFAULT_FG, COLOR_DEFAULT_BG );
-        clear_screen( stderr );
+        //clear_screen( stderr );
+        // progremmers note: clear_screen appears to have side-efect of flushing the screen.
+        // So use, blank_panel which directly clears the screen with spaces.
+        blank_panel();
 
         /* Scroll to last full screen's worth of messages */
         scroll_to_bottom_screen();

@@ -150,7 +150,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
             fwritemsg( __FILE__, __LINE__, __FUNCTION__,        \
                 WRMSG_NORMAL, stdout,                           \
                 #id "%s " id "\n", sev,                         \
-                hthread_self(),                                 \
+                TID_CAST(hthread_self()),                       \
                 SSID_TO_LCSS( dev->ssid ),                      \
                 dev->devnum, ## __VA_ARGS__ );                  \
         }                                                       \
@@ -303,7 +303,8 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC00110 "Defaulting all threads to priority %d"
 #define HHC00111 "Thread CPU Time IS available (_POSIX_THREAD_CPUTIME=%ld)"
 #define HHC00112 "Thread CPU Time is NOT available."
-//efine HHC00113 - HHC00129 (available)
+#define HHC00113 "Setting main thread QoS to USER_INITIATED failed: %s"
+//efine HHC00114 - HHC00129 (available)
 
 #define HHC00130 "PGMPRDOS LICENSED specified and a licenced program product operating system is running"
 #define HHC00131 "A licensed program product operating system detected, all processors have been stopped"
@@ -354,7 +355,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC00203 "%1d:%04X Tape file %s, type %s: invalid tapemark at offset 0x%16.16"PRIX64
 #define HHC00204 "%1d:%04X Tape file %s, type %s: error in function %s, offset 0x%16.16"PRIX64": %s"
 #define HHC00205 "%1d:%04X Tape file %s, type %s: error in function %s: %s"
-#define HHC00206 "%1d:%04X Tape file %s, type %s: not a valid @TDF file"
+#define HHC00206 "%1d:%04X Tape file %s, type %s: not a valid @TDF file: %s"
 #define HHC00207 "%1d:%04X Tape file %s, type %s: line %d: %s"
 #define HHC00208 "%1d:%04X Tape file %s, type %s: maximum tape capacity exceeded"
 #define HHC00209 "%1d:%04X Tape file %s, type %s: maximum tape capacity enforced"
@@ -485,7 +486,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC00387 "%1d:%04X CCKD%s image %s is SEVERELY fragmented!"
 #define HHC00388 "%1d:%04X CCKD%s image %s is moderately fragmented"
 #define HHC00389 "%1d:%04X CCKD%s image %s is slightly fragmented"
-//efine HHC00390 (available)
+#define HHC00390 "%1d:%04X CCKD file: device has no shadow files"
 //efine HHC00391 (available)
 //efine HHC00392 (available)
 //efine HHC00393 (available)
@@ -541,7 +542,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC00440 "Thread "TIDPAT" %1d:%04X CKD file %s: updating cyl %d head %d record %d kl %d dl %d"
 #define HHC00441 "Thread "TIDPAT" %1d:%04X CKD file %s: updating cyl %d head %d record %d dl %d"
 #define HHC00442 "Thread "TIDPAT" %1d:%04X CKD file %s: set file mask %02X"
-//efine HHC00443 (available)
+#define HHC00443 "%1d:%04X CKD file: 'fakewrite' invalid without 'readonly'"
 //efine HHC00444 (available)
 #define HHC00445 "%1d:%04X CKD file %s: updating cyl %d head %d"
 #define HHC00446 "%1d:%04X CKD file %s: write track error: stat %2.2X"
@@ -682,7 +683,8 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC00742 "Shared: OPTION_SHARED_DEVICES not defined"
 #define HHC00743 "Shared:  %s" // (trace message)
 #define HHC00744 "Shared: Server already active"
-//efine HHC00745 - HHC00799 (available)
+#define HHC00745 "%1d:%04X Shared: CKD file: 'fakewrite' invalid without 'readonly'"
+//efine HHC00746 - HHC00799 (available)
 
 // reserve 008xx for processor related messages
 #define HHC00800 "Processor %s%02X: loaded wait state PSW %s"
@@ -711,11 +713,12 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC00823 "You have %d seconds to attach a debugger before crash dump will be taken!"
 #define HHC00824 "Debugger attached! NOT crashing!"
 #define HHC00825 "TIME'S UP! (or debugger has been detached!) - Forcing crash dump!"
-//efine HHC00826 (available)
+#define HHC00826 "Processor %s%02X: processor %sstopped due to disabled wait"
 #define HHC00827 "Processor %s%02X: engine %02X type %1d set: %s"
-#define HHC00828 "Processor %s%02X: ipl failed: %s"
-//efine HHC00830 (available)
-//efine HHC00831 (available)
+#define HHC00828 "Processor %s%02X: ipl failed: %s" // (IPL I/O error)
+#define HHC00829 "Command cannot be issued once system has been IPLed"
+#define HHC00830 "System cannot be IPLed once shadow file commands have been issued"
+#define HHC00831 "Hercules needs to be restarted before proceeding"
 //efine HHC00832 (available)
 //efine HHC00833 (available)
 #define HHC00834 "Processor %s%02X: %s"
@@ -723,7 +726,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 //efine HHC00836 (available)
 //efine HHC00837 (available)
 //efine HHC00838 (available)
-#define HHC00839 "Processor %s%02X: ipl failed: %s"
+#define HHC00839 "Processor %s%02X: ipl failed: %s" // (bad IPL PSW)
 #define HHC00840 "Processor %s%02X: External interrupt: interrupt key"
 #define HHC00841 "Processor %s%02X: External interrupt: clock comparator"
 #define HHC00842 "Processor %s%02X: External interrupt: CPU timer=%16.16"PRIX64
@@ -1099,7 +1102,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC01418 "Symbol expansion will result in buffer overflow; ignored"
 #define HHC01419 "Symbol and/or Value is invalid; ignored"
 #define HHC01420 "Begin Hercules shutdown"
-//efine HHC01421 (available)
+#define HHC01421 "Shutdown: %s"
 #define HHC01422 "Configuration released"
 #define HHC01423 "Calling termination routines"
 #define HHC01424 "All termination routines complete"
@@ -1439,7 +1442,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC02263 "Script %d: processing resumed..."
 #define HHC02264 "Script %d: file %s processing ended"
 #define HHC02265 "Script %d: file %s aborted due to previous conditions"
-//efine HHC02266 (available)
+#define HHC02266 "%s" // Vector registers
 #define HHC02267 "%s" // (trace instr: Real address is not valid)
 #define HHC02268 "%s" // maxrates command
 #define HHC02269 "%s" // General purpose registers
@@ -1783,7 +1786,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC02472 "Dataset is not RECFM %s; utility ends"
 #define HHC02473 "Dataset is not DSORG %s; utility ends"
 #define HHC02474 "Error processing %s"
-#define HHC02475 "Records written to %s: %d"
+#define HHC02475 "Records %s %s: %d"
 #define HHC02476 "Dataset %s not found"
 #define HHC02477 "In %s: function %s rc %d%s"
 #define HHC02478 "Length invalid for KEY %d or DATA %d%s"
@@ -2074,7 +2077,8 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC02693 "search_key_equal rc %d"
 #define HHC02694 "writing %s"
 #define HHC02695 "Closed output file %s"
-//efine HHC02696 - HHC02699 (available)
+#define HHC02696 "Data set format is %s"
+//efine HHC02697 - HHC02699 (available)
 
 #define HHC02700 "SCSI tapes are not supported with this build"
 #define HHC02701 "Abnormal termination"
@@ -2215,7 +2219,8 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC02781 "Invalid %s parameter: %s"
 #define HHC02782 "LRECL %i and BLOCK %i exceeds maximum AWS blocksize of %i"
 #define HHC02783 "Parameter %s ignored due to NLTAPE option"
-//efine HHC02784 - HHC02799 (available)
+#define HHC02784 "Error reading from file' %s': %s"
+//efine HHC02785 - HHC02799 (available)
 
 // mt_cmd
 #define HHC02800 "%1d:%04X %s complete"
@@ -2293,7 +2298,7 @@ LOGM_DLL_IMPORT int  panel_command_capture( char* cmd, char** resp, bool quiet )
 #define HHC03002 "Missing input-file specification"
 #define HHC03003 "Extraneous parameter: %s"
 #define HHC03004 "Unsupported dasd image file format"
-#define HHC03005 "Device type %4.4X not found in dasd table"
+#define HHC03005 "Device type '%2.2X' not found in dasd table"
 #define HHC03006 "%s error: %s"
 #define HHC03007 "File size:      (%s bytes)"
 #define HHC03008 "Compressed device header inconsistency(s) found! code: %4.4X"

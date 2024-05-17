@@ -471,6 +471,7 @@
     <ClCompile Include="x75.c" />
     <ClCompile Include="xstore.c" />
     <ClCompile Include="zfcp.c" />
+    <ClCompile Include="zvector.c" />
   </ItemGroup>
   <ItemGroup>
     <None Include=".travis.yml" />
@@ -753,6 +754,8 @@
     <None Include="tests\agf.listing" />
     <None Include="tests\agf.tst" />
     <None Include="tests\awsbsf.aws" />
+    <None Include="tests\3330.cckd64" />
+    <None Include="tests\3380.cckd64" />
     <None Include="tests\3390.cckd64" />
     <None Include="tests\awsbsf.tst" />
     <None Include="tests\bc-ilc.asm" />
@@ -887,6 +890,7 @@
     <None Include="tests\CBUC.tst" />
     <None Include="tests\CCW-ILS.asm" />
     <None Include="tests\CCWILS.3390-1.comp-z" />
+    <None Include="tests\datetime.rexx" />
     <None Include="tests\CCW-ILS.core" />
     <None Include="tests\CCW-ILS.list" />
     <None Include="tests\CCW-ILS.pdf" />
@@ -942,6 +946,26 @@
     <None Include="tests\cmd-rv-4K-64.subxxx" />
     <None Include="tests\cmd-rv.xxx" />
     <None Include="tests\cr.tst" />
+    <None Include="tests\CU12-01-xpage.asm" />
+    <None Include="tests\CU12-01-xpage.core" />
+    <None Include="tests\CU12-01-xpage.list" />
+    <None Include="tests\CU12-01-xpage.pdf" />
+    <None Include="tests\CU12-01-xpage.tst" />
+    <None Include="tests\CU12-02-performance.asm" />
+    <None Include="tests\CU12-02-performance.core" />
+    <None Include="tests\CU12-02-performance.list" />
+    <None Include="tests\CU12-02-performance.pdf" />
+    <None Include="tests\CU12-02-performance.tst" />
+    <None Include="tests\CU14-01-xpage.asm" />
+    <None Include="tests\CU14-01-xpage.core" />
+    <None Include="tests\CU14-01-xpage.list" />
+    <None Include="tests\CU14-01-xpage.pdf" />
+    <None Include="tests\CU14-01-xpage.tst" />
+    <None Include="tests\CU14-02-performance.asm" />
+    <None Include="tests\CU14-02-performance.core" />
+    <None Include="tests\CU14-02-performance.list" />
+    <None Include="tests\CU14-02-performance.pdf" />
+    <None Include="tests\CU14-02-performance.tst" />
     <None Include="tests\CUSE-01-basic.asm" />
     <None Include="tests\CUSE-01-basic.core" />
     <None Include="tests\CUSE-01-basic.list" />
@@ -986,6 +1010,11 @@
     <None Include="tests\float.list" />
     <None Include="tests\float.tst" />
     <None Include="tests\float.pdf" />
+    <None Include="tests\GH615.asm" />
+    <None Include="tests\GH615.core" />
+    <None Include="tests\GH615.list" />
+    <None Include="tests\GH615.pdf" />
+    <None Include="tests\GH615.tst" />
     <None Include="tests\csxtr.assemble" />
     <None Include="tests\csxtr.listing" />
     <None Include="tests\csxtr.tst" />
@@ -1067,6 +1096,11 @@
     <None Include="tests\semipriv.core" />
     <None Include="tests\semipriv.list" />
     <None Include="tests\semipriv.tst" />
+    <None Include="tests\ShiftLeft.asm" />
+    <None Include="tests\ShiftLeft.core" />
+    <None Include="tests\ShiftLeft.list" />
+    <None Include="tests\ShiftLeft.pdf" />
+    <None Include="tests\ShiftLeft.tst" />
     <None Include="tests\sigp.assemble" />
     <None Include="tests\sigp.listing" />
     <None Include="tests\sigp.tst" />

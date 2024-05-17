@@ -22,7 +22,9 @@
 #include "hercules.h"
 #include "devtype.h"
 
-#define WRITEDBG
+// If set writes debug output to FD 5 otherwise uses TRACE
+//#define WRITEDBG
+
 // If ENABLE_TRACING_STMTS is undefiined it will be 
 // set baed on the debug flag, tracing only in a debug build
 //#define ENABLE_TRACING_STMTS 1

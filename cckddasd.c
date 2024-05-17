@@ -146,6 +146,8 @@ int cckd_dasd_init( int argc, BYTE* argv[] )
 /*-------------------------------------------------------------------*/
 void cckd_dasd_term_if_appropriate()
 {
+    int max;
+
     /* Check if it's time to terminate yet */
     obtain_lock( &cckdblk.devlock );
     {
@@ -162,36 +164,42 @@ void cckd_dasd_term_if_appropriate()
     /* Terminate all readahead threads... */
     obtain_lock( &cckdblk.ralock );
     {
+        max = cckdblk.ramax;    /* Save current value */
         cckdblk.ramax = 0;      /* signal   all threads to terminate */
         while (cckdblk.ras)     /* wait for all threads to terminate */
         {
             broadcast_condition( &cckdblk.racond );
             wait_condition( &cckdblk.termcond, &cckdblk.ralock );
         }
+        cckdblk.ramax = max;    /* Restore orignal value */
     }
     release_lock( &cckdblk.ralock );
 
     /* Terminate all garbage collection threads... */
     obtain_lock( &cckdblk.gclock );
     {
+        max = cckdblk.gcmax;    /* Save current value */
         cckdblk.gcmax = 0;      /* signal   all threads to terminate */
         while (cckdblk.gcs)     /* wait for all threads to terminate */
         {
             broadcast_condition( &cckdblk.gccond );
             wait_condition( &cckdblk.termcond, &cckdblk.gclock );
         }
+        cckdblk.gcmax = max;    /* Restore orignal value */
     }
     release_lock( &cckdblk.gclock );
 
     /* Terminate all writer threads... */
     obtain_lock( &cckdblk.wrlock );
     {
-        cckdblk.wrmax = 0;      /* signal   all threads to terminate */
+        max = cckdblk.termwr;   /* Save current value */
+        cckdblk.termwr = 1;     /* signal   all threads to terminate */
         while (cckdblk.wrs)     /* wait for all threads to terminate */
         {
             broadcast_condition( &cckdblk.wrcond );
             wait_condition( &cckdblk.termcond, &cckdblk.wrlock );
         }
+        cckdblk.termwr = max;    /* Restore orignal value */
     }
     release_lock( &cckdblk.wrlock );
 
@@ -397,13 +405,16 @@ int             rc, i;                  /* Return code, Loop index   */
     }
     release_lock( &cckd->filelock );
 
+    /* If no more devices then perform global termination */
+    cckd_dasd_term_if_appropriate();
+
     /* Destroy the cckd extension's locks and conditions */
     destroy_lock( &cckd->cckdiolock );
     destroy_lock( &cckd->filelock );
     destroy_condition( &cckd->cckdiocond );
 
     /* free the cckd extension itself */
-    dev->cckd_ext= cckd_free (dev, "ext", cckd);
+    dev->cckd_ext = cckd_free (dev, "ext", cckd);
 
     if (dev->dasdsfn) free (dev->dasdsfn);
     dev->dasdsfn = NULL;
@@ -411,12 +422,10 @@ int             rc, i;                  /* Return code, Loop index   */
     close (dev->fd);
     dev->fd = -1;
 
-    /* If no more devices then perform global termination */
-    cckd_dasd_term_if_appropriate();
-
     dev->buf = NULL;
     dev->bufsize = 0;
 
+    /* return to caller */
     return 0;
 } /* end function cckd_dasd_close_device */
 
@@ -789,14 +798,18 @@ void* cckd_realloc( DEVBLK *dev, char *id, void* p, size_t size )
 {
     void* p2 = NULL;
 
+    // shut up GCC 12 warning about using a pointer after realloc()
+    char p_string[33];
+    MSGBUF( p_string, "%p", p );
+
     if (size)
         p2 = realloc( p, size );
-    CCKD_TRACE( "%s realloc %p len %ld", id, p, (long) size );
+    CCKD_TRACE( "%s realloc %s len %ld", id, p_string, (long) size );
 
     if (!p2)
     {
         char buf[64];
-        MSGBUF( buf, "realloc( %p, %d )", p, (int) size );
+        MSGBUF( buf, "realloc( %s, %d )", p_string, (int) size );
         // "%1d:%04X CCKD file: error in function %s: %s"
         WRMSG( HHC00303, "E", LCSS_DEVNUM, buf, strerror( errno ));
         cckd_print_itrace();
@@ -1790,7 +1803,7 @@ int             wrs;
     if (!cckdblk.batch)
     {
         cckdblk.wrprio = sysblk.cpuprio - 1;
-        set_thread_priority( cckdblk.wrprio );
+        SET_THREAD_PRIORITY( cckdblk.wrprio, sysblk.qos_user_initiated );
     }
 
     obtain_lock( &cckdblk.wrlock );
@@ -1804,7 +1817,7 @@ int             wrs;
         --cckdblk.wrs;  /* decrease threads started */
         --cckdblk.wra;  /* decrease threads active  */
 
-        if (!cckdblk.wrmax)  /* choose thread termination message  */
+        if (cckdblk.termwr) /* choose thread termination message  */
         {
             if (!cckdblk.batch || cckdblk.batchml > 1)
               // "Thread id "TIDPAT", prio %d, name '%s' ended"
@@ -1814,7 +1827,7 @@ int             wrs;
             if (!cckdblk.batch || cckdblk.batchml > 0)
                 // "Ending thread "TIDPAT" %s, pri=%d, started=%d, max=%d exceeded"
                 WRMSG( HHC00108, "W", TID_CAST( thread_id()), threadname,
-                get_thread_priority(), writer, cckdblk.wrmax );
+                    get_thread_priority(), writer, cckdblk.wrmax );
 
         release_lock( &cckdblk.wrlock );
         signal_condition( &cckdblk.termcond );/* shutting down */
@@ -1825,14 +1838,14 @@ int             wrs;
         // "Thread id "TIDPAT", prio %d, name '%s' started"
         LOG_THREAD_BEGIN( threadname  );
 
-    while (writer <= cckdblk.wrmax || cckdblk.wrpending)
+    while (!cckdblk.termwr && (writer <= cckdblk.wrmax || cckdblk.wrpending))
     {
-        /* Wait for work */
+        /* Wait (but not forever!) for work */
         if (cckdblk.wrpending == 0)
         {
             cckdblk.wrwaiting++;
             {
-                wait_condition( &cckdblk.wrcond, &cckdblk.wrlock );
+                timed_wait_condition_relative_usecs( &cckdblk.wrcond, &cckdblk.wrlock, 1000000, NULL );
             }
             cckdblk.wrwaiting--;
         }
@@ -4236,20 +4249,25 @@ BYTE            buf[64*1024];           /* Buffer                    */
         cckdblk.sfmerge = cckdblk.sfforce = 0;
         for (dev=sysblk.firstdev; dev; dev=dev->nextdev)
         {
-            if ((cckd = dev->cckd_ext))
+            if ((cckd = dev->cckd_ext)) /* Compressed device? */
             {
-                // "%1d:%04X CCKD file: merging shadow files..."
-                WRMSG( HHC00321, "I", LCSS_DEVNUM );
-                cckd->sfmerge = merge;
-                cckd->sfforce = force;
-                cckd_sf_remove( dev );
-                n++;
+                if (cckd->sfn) /* Any active shadow file(s)? */
+                {
+                    // "%1d:%04X CCKD file: merging shadow files..."
+                    WRMSG( HHC00321, "I", LCSS_DEVNUM );
+                    cckd->sfmerge = merge;
+                    cckd->sfforce = force;
+                    cckd_sf_remove( dev );
+                    n++;
+                }
             }
         }
         // "CCKD file number of devices processed: %d"
         WRMSG( HHC00316, "I", n );
         return NULL;
     }
+
+    /* Specific device... */
 
     if (dev->cckd64)
         return cckd64_sf_remove( data );
@@ -4258,6 +4276,13 @@ BYTE            buf[64*1024];           /* Buffer                    */
     {
         // "%1d:%04X CCKD file: device is not a cckd device"
         WRMSG( HHC00317, "W", LCSS_DEVNUM );
+        return NULL;
+    }
+
+    if (!cckd->sfn)
+    {
+        // "%1d:%04X CCKD file: device has no shadow files"
+        WRMSG( HHC00390, "W", LCSS_DEVNUM );
         return NULL;
     }
 
@@ -5875,7 +5900,7 @@ BYTE            comp;                     /* Compression type        */
         return to;
     }
 
-    /* Unable to uncompress */
+    // "%1d:%04X CCKD file[%d] %s: uncompress error trk %d: %2.2x%2.2x%2.2x%2.2x%2.2x"
     WRMSG (HHC00343, "E",
             LCSS_DEVNUM, cckd->sfn, cckd_sf_name(dev, cckd->sfn), trk,
             from[0], from[1], from[2], from[3], from[4]);
@@ -6714,7 +6739,7 @@ void cckd_trace( const char* func, int line, DEVBLK* dev, char* fmt, ... )
 
             TIDPAT" @ %s.%6.6ld %1d:%04X",  // "HHHHHHHH @ hh:mm:ss.uuuuuu n:CCUU"
 
-            hthread_self(),                 // "HHHHHHHH" (TIDPAT)
+            TID_CAST(hthread_self()),       // "HHHHHHHH" (TIDPAT)
             todwrk + 11,                    // "hh:mm:ss" (%s)
             (long int)timeval.tv_usec,      // "uuuuuu"   (%6.6ld
             LCSS_DEVNUM                     // "n:CCUU"   (%1d:%04X)

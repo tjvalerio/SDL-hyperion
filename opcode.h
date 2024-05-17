@@ -232,68 +232,71 @@ OPCD_DLL_IMPORT int iprint_router_func( int arch_mode, BYTE inst[], char mnemoni
     {                                                               \
         if (sysblk.icount)                                          \
         {                                                           \
-            int used;                                               \
+            U64 used;                                               \
             gettimeofday(&sysblk.start_time, NULL);                 \
             switch ((_inst)[0]) {                                   \
             case 0x01:                                              \
-                used = sysblk.imap01[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imap01[(_inst)[1]]++;           \
                 break;                                              \
             case 0xA4:                                              \
-                used = sysblk.imapa4[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imapa4[(_inst)[1]]++;           \
                 break;                                              \
             case 0xA5:                                              \
-                used = sysblk.imapa5[(_inst)[1] & 0x0F]++;          \
+                used = sysblk.imaps.imapa5[(_inst)[1] & 0x0F]++;    \
                 break;                                              \
             case 0xA6:                                              \
-                used = sysblk.imapa6[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imapa6[(_inst)[1]]++;           \
                 break;                                              \
             case 0xA7:                                              \
-                used = sysblk.imapa7[(_inst)[1] & 0x0F]++;          \
+                used = sysblk.imaps.imapa7[(_inst)[1] & 0x0F]++;    \
                 break;                                              \
             case 0xB2:                                              \
-                used = sysblk.imapb2[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imapb2[(_inst)[1]]++;           \
                 break;                                              \
             case 0xB3:                                              \
-                used = sysblk.imapb3[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imapb3[(_inst)[1]]++;           \
                 break;                                              \
             case 0xB9:                                              \
-                used = sysblk.imapb9[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imapb9[(_inst)[1]]++;           \
                 break;                                              \
             case 0xC0:                                              \
-                used = sysblk.imapc0[(_inst)[1] & 0x0F]++;          \
+                used = sysblk.imaps.imapc0[(_inst)[1] & 0x0F]++;    \
                 break;                                              \
             case 0xC2:                                              \
-                used = sysblk.imapc2[(_inst)[1] & 0x0F]++;          \
+                used = sysblk.imaps.imapc2[(_inst)[1] & 0x0F]++;    \
                 break;                                              \
             case 0xC4:                                              \
-                used = sysblk.imapc4[(_inst)[1] & 0x0F]++;          \
+                used = sysblk.imaps.imapc4[(_inst)[1] & 0x0F]++;    \
                 break;                                              \
             case 0xC6:                                              \
-                used = sysblk.imapc6[(_inst)[1] & 0x0F]++;          \
+                used = sysblk.imaps.imapc6[(_inst)[1] & 0x0F]++;    \
                 break;                                              \
             case 0xC8:                                              \
-                used = sysblk.imapc8[(_inst)[1] & 0x0F]++;          \
+                used = sysblk.imaps.imapc8[(_inst)[1] & 0x0F]++;    \
                 break;                                              \
             case 0xE3:                                              \
-                used = sysblk.imape3[(_inst)[5]]++;                 \
+                used = sysblk.imaps.imape3[(_inst)[5]]++;           \
                 break;                                              \
             case 0xE4:                                              \
-                used = sysblk.imape4[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imape4[(_inst)[1]]++;           \
                 break;                                              \
             case 0xE5:                                              \
-                used = sysblk.imape5[(_inst)[1]]++;                 \
+                used = sysblk.imaps.imape5[(_inst)[1]]++;           \
+                break;                                              \
+            case 0xE7:                                              \
+                used = sysblk.imaps.imape7[(_inst)[5]]++;           \
                 break;                                              \
             case 0xEB:                                              \
-                used = sysblk.imapeb[(_inst)[5]]++;                 \
+                used = sysblk.imaps.imapeb[(_inst)[5]]++;           \
                 break;                                              \
             case 0xEC:                                              \
-                used = sysblk.imapec[(_inst)[5]]++;                 \
+                used = sysblk.imaps.imapec[(_inst)[5]]++;           \
                 break;                                              \
             case 0xED:                                              \
-                used = sysblk.imaped[(_inst)[5]]++;                 \
+                used = sysblk.imaps.imaped[(_inst)[5]]++;           \
                 break;                                              \
             default:                                                \
-                used = sysblk.imapxx[(_inst)[0]]++;                 \
+                used = sysblk.imaps.imapxx[(_inst)[0]]++;           \
             }                                                       \
                                                                     \
             if (!used)                                              \
@@ -320,7 +323,7 @@ OPCD_DLL_IMPORT int iprint_router_func( int arch_mode, BYTE inst[], char mnemoni
         {                                                           \
             struct timeval end_time;                                \
             struct timeval dur;                                     \
-            U64 elapsed_usecs;                                       \
+            U64 elapsed_usecs;                                      \
                                                                     \
             gettimeofday(&end_time, NULL);                          \
             timeval_subtract(&sysblk.start_time, &end_time, &dur);  \
@@ -328,64 +331,67 @@ OPCD_DLL_IMPORT int iprint_router_func( int arch_mode, BYTE inst[], char mnemoni
                                                                     \
             switch ((_inst)[0]) {                                   \
             case 0x01:                                              \
-                sysblk.imap01T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imap01T[(_inst)[1]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xA4:                                              \
-                sysblk.imapa4T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imapa4T[(_inst)[1]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xA5:                                              \
-                sysblk.imapa5T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
+                sysblk.imaps.imapa5T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
                 break;                                              \
             case 0xA6:                                              \
-                sysblk.imapa6T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imapa6T[(_inst)[1]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xA7:                                              \
-                sysblk.imapa7T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
+                sysblk.imaps.imapa7T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
                 break;                                              \
             case 0xB2:                                              \
-                sysblk.imapb2T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imapb2T[(_inst)[1]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xB3:                                              \
-                sysblk.imapb3T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imapb3T[(_inst)[1]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xB9:                                              \
-                sysblk.imapb9T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imapb9T[(_inst)[1]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xC0:                                              \
-                sysblk.imapc0T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
+                sysblk.imaps.imapc0T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
                 break;                                              \
             case 0xC2:                                              \
-                sysblk.imapc2T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
+                sysblk.imaps.imapc2T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
                 break;                                              \
             case 0xC4:                                              \
-                sysblk.imapc4T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
+                sysblk.imaps.imapc4T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
                 break;                                              \
             case 0xC6:                                              \
-                sysblk.imapc6T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
+                sysblk.imaps.imapc6T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
                 break;                                              \
             case 0xC8:                                              \
-                sysblk.imapc8T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
+                sysblk.imaps.imapc8T[(_inst)[1] & 0x0F]+=elapsed_usecs;   \
                 break;                                              \
             case 0xE3:                                              \
-                sysblk.imape3T[(_inst)[5]]+=elapsed_usecs;          \
+                sysblk.imaps.imape3T[(_inst)[5]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xE4:                                              \
-                sysblk.imape4T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imape4T[(_inst)[1]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xE5:                                              \
-                sysblk.imape5T[(_inst)[1]]+=elapsed_usecs;          \
+                sysblk.imaps.imape5T[(_inst)[1]]+=elapsed_usecs;    \
+                break;                                              \
+            case 0xE7:                                              \
+                sysblk.imaps.imape7T[(_inst)[5]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xEB:                                              \
-                sysblk.imapebT[(_inst)[5]]+=elapsed_usecs;          \
+                sysblk.imaps.imapebT[(_inst)[5]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xEC:                                              \
-                sysblk.imapecT[(_inst)[5]]+=elapsed_usecs;          \
+                sysblk.imaps.imapecT[(_inst)[5]]+=elapsed_usecs;    \
                 break;                                              \
             case 0xED:                                              \
-                sysblk.imapedT[(_inst)[5]]+=elapsed_usecs;          \
+                sysblk.imaps.imapedT[(_inst)[5]]+=elapsed_usecs;    \
                 break;                                              \
             default:                                                \
-                sysblk.imapxxT[(_inst)[0]]+=elapsed_usecs;          \
+                sysblk.imaps.imapxxT[(_inst)[0]]+=elapsed_usecs;    \
             }                                                       \
         }                                                           \
     } while (0)
@@ -2067,51 +2073,6 @@ do {                                                                  \
 /*               (end floating-point helper macros)                  */
 /*-------------------------------------------------------------------*/
 
-/*-------------------------------------------------------------------*/
-/*        Special FPR2I/FPREX handling for HERC_370_EXTENSION        */
-/*-------------------------------------------------------------------*/
-#undef FPR2I
-#undef FPREX
-#if defined( FEATURE_BASIC_FP_EXTENSIONS )
-
-  // 390 or zArch -OR- 370 with the "FEATURE_370_EXTENSION" BUILD
-  // option #defined, which causes the "FEATURE_BASIC_FP_EXTENSIONS"
-  // BUILD to necessarily ALSO be #defined, forcing us to check if
-  // the "HERC_370_EXTENSION" facility is enabled or not.
-  //
-  // PLEASE NOTE that enabling the "HERC_370_EXTENSION" facility
-  // causes nonconformant/incorrect S/370 floating point behavior!
-
-  #define FPR2I(_r)     /* Convert fpr to index */                    \
-  ((0                                                                 \
-      || ARCH_370_IDX != sysblk.arch_mode                             \
-      || FACILITY_ENABLED_ARCH( HERC_370_EXTENSION, ARCH_370_IDX )    \
-  )                                                                   \
-  ? ((_r) << 1) : (_r))
-
-  #define FPREX         /* Offset of extended register */             \
-  ((0                                                                 \
-      || ARCH_370_IDX != sysblk.arch_mode                             \
-      || FACILITY_ENABLED_ARCH( HERC_370_EXTENSION, ARCH_370_IDX )    \
-  )                                                                   \
-  ? 4 : 2 )
-
-#else // !defined( FEATURE_BASIC_FP_EXTENSIONS )
-
-  // S/370 without the "FEATURE_370_EXTENSION" BUILD option defined,
-  // which causes the "FEATURE_BASIC_FP_EXTENSIONS" BUILD option to
-  // NOT be #defined, which provides normal S/370 behavior.
-
-  #define FPR2I(_r)     (_r)        /* Convert fpr to index */
-  #define FPREX           2         /* Offset of extended register */
-
-#endif // defined( FEATURE_BASIC_FP_EXTENSIONS)
-/*-------------------------------------------------------------------*/
-/*     (end special fpr2i/fprex handling for herc_370_extension)     */
-/*-------------------------------------------------------------------*/
-
-
-
 #define TLBIX(_addr) (((VADR_L)(_addr) >> TLB_PAGESHIFT) & TLB_MASK)
 
 #define MAINADDR(_main, _addr) \
@@ -2124,6 +2085,26 @@ do {                                                                  \
 
 #define MAIN_TO_ABS(_main)  ((U64)((BYTE*)(_main) - sysblk.mainstor))
 
+/*-------------------------------------------------------------------*/
+/*              zVector Facility                                     */
+/*-------------------------------------------------------------------*/
+#if defined( _FEATURE_129_ZVECTOR_FACILITY )
+
+    /* Program check if vector instructions is executed when         */
+    /* TXF constraint mode or VOP control is zero                    */
+
+#define ZVECTOR_CHECK(_regs) \
+        TXF_INSTR_CHECK(_regs); \
+        if( !((_regs)->CR(0) & CR0_VOP) ) { \
+            (_regs)->dxc = DXC_VECTOR_INSTRUCTION; \
+            (_regs)->program_interrupt( (_regs), PGM_DATA_EXCEPTION); \
+        }
+    /* Debug end of vector instruction execution                     */
+#define ZVECTOR_END(_regs) \
+        if (0 && inst[5] != (U8) 0x3E && inst[5] != (U8) 0x36) \
+            ARCH_DEP(display_inst) (_regs, inst);
+
+#endif /*defined( _FEATURE_129_ZVECTOR_FACILITY )*/
 
 /*-------------------------------------------------------------------*/
 /*        Perform invalidation after storage key update...           */
@@ -2137,6 +2118,7 @@ do {                                                                  \
 /*  tighter than what is provided here.                              */
 /*                                                                   */
 /*-------------------------------------------------------------------*/
+
 #define STORKEY_INVALIDATE_LOCKED( _regs, _n )                          \
                                                                         \
  do                                                                     \
@@ -3544,6 +3526,148 @@ DEF_INST(convert_packed_to_dfp_ext);
 DEF_INST(convert_packed_to_dfp_long);
 DEF_INST(convert_dfp_ext_to_packed);
 DEF_INST(convert_dfp_long_to_packed);
+#endif
+
+#if defined( FEATURE_129_ZVECTOR_FACILITY )
+DEF_INST(vector_load_element_8);
+DEF_INST(vector_load_element_16);
+DEF_INST(vector_load_element_64);
+DEF_INST(vector_load_element_32);
+DEF_INST(vector_load_logical_element_and_zero);
+DEF_INST(vector_load_and_replicate);
+DEF_INST(vector_load);
+DEF_INST(vector_load_to_block_boundary);
+DEF_INST(vector_store_element_8);
+DEF_INST(vector_store_element_16);
+DEF_INST(vector_store_element_64);
+DEF_INST(vector_store_element_32);
+DEF_INST(vector_store);
+DEF_INST(vector_gather_element_64);
+DEF_INST(vector_gather_element_32);
+DEF_INST(vector_scatter_element_64);
+DEF_INST(vector_scatter_element_32);
+DEF_INST(vector_load_gr_from_vr_element);
+DEF_INST(vector_load_vr_element_from_gr);
+DEF_INST(load_count_to_block_boundary);
+DEF_INST(vector_element_shift_left);
+DEF_INST(vector_element_rotate_left_logical);
+DEF_INST(vector_load_multiple);
+DEF_INST(vector_load_with_length);
+DEF_INST(vector_element_shift_right_logical);
+DEF_INST(vector_element_shift_right_arithmetic);
+DEF_INST(vector_store_multiple);
+DEF_INST(vector_store_with_length);
+DEF_INST(vector_load_element_immediate_8);
+DEF_INST(vector_load_element_immediate_16);
+DEF_INST(vector_load_element_immediate_64);
+DEF_INST(vector_load_element_immediate_32);
+DEF_INST(vector_generate_byte_mask);
+DEF_INST(vector_replicate_immediate);
+DEF_INST(vector_generate_mask);
+DEF_INST(vector_fp_test_data_class_immediate);
+DEF_INST(vector_replicate);
+DEF_INST(vector_population_count);
+DEF_INST(vector_count_trailing_zeros);
+DEF_INST(vector_count_leading_zeros);
+DEF_INST(vector_load_vector);
+DEF_INST(vector_isolate_string);
+DEF_INST(vector_sign_extend_to_doubleword);
+DEF_INST(vector_merge_low);
+DEF_INST(vector_merge_high);
+DEF_INST(vector_load_vr_from_grs_disjoint);
+DEF_INST(vector_sum_across_word);
+DEF_INST(vector_sum_across_doubleword);
+DEF_INST(vector_checksum);
+DEF_INST(vector_sum_across_quadword);
+DEF_INST(vector_and);
+DEF_INST(vector_and_with_complement);
+DEF_INST(vector_or);
+DEF_INST(vector_nor);
+DEF_INST(vector_exclusive_or);
+DEF_INST(vector_element_shift_left_vector);
+DEF_INST(vector_element_rotate_and_insert_under_mask);
+DEF_INST(vector_element_rotate_left_logical_vector);
+DEF_INST(vector_shift_left);
+DEF_INST(vector_shift_left_by_byte);
+DEF_INST(vector_shift_left_double_by_byte);
+DEF_INST(vector_element_shift_right_logical_vector);
+DEF_INST(vector_element_shift_right_arithmetic_vector);
+DEF_INST(vector_shift_right_logical);
+DEF_INST(vector_shift_right_logical_by_byte);
+DEF_INST(vector_shift_right_arithmetic);
+DEF_INST(vector_shift_right_arithmetic_by_byte);
+DEF_INST(vector_find_element_equal);
+DEF_INST(vector_find_element_not_equal);
+DEF_INST(vector_find_any_element_equal);
+DEF_INST(vector_permute_doubleword_immediate);
+DEF_INST(vector_string_range_compare);
+DEF_INST(vector_permute);
+DEF_INST(vector_select);
+DEF_INST(vector_fp_multiply_and_subtract);
+DEF_INST(vector_fp_multiply_and_add);
+DEF_INST(vector_pack);
+DEF_INST(vector_pack_logical_saturate);
+DEF_INST(vector_pack_saturate);
+DEF_INST(vector_multiply_logical_high);
+DEF_INST(vector_multiply_low);
+DEF_INST(vector_multiply_high);
+DEF_INST(vector_multiply_logical_even);
+DEF_INST(vector_multiply_logical_odd);
+DEF_INST(vector_multiply_even);
+DEF_INST(vector_multiply_odd);
+DEF_INST(vector_multiply_and_add_logical_high);
+DEF_INST(vector_multiply_and_add_low);
+DEF_INST(vector_multiply_and_add_high);
+DEF_INST(vector_multiply_and_add_logical_even);
+DEF_INST(vector_multiply_and_add_logical_odd);
+DEF_INST(vector_multiply_and_add_even);
+DEF_INST(vector_multiply_and_add_odd);
+DEF_INST(vector_galois_field_multiply_sum);
+DEF_INST(vector_add_with_carry_compute_carry);
+DEF_INST(vector_add_with_carry);
+DEF_INST(vector_galois_field_multiply_sum_and_accumulate);
+DEF_INST(vector_subtract_with_borrow_compute_borrow_indication);
+DEF_INST(vector_subtract_with_borrow_indication);
+DEF_INST(vector_fp_convert_to_logical_64_bit);
+DEF_INST(vector_fp_convert_from_logical_64_bit);
+DEF_INST(vector_fp_convert_to_fixed_64_bit);
+DEF_INST(vector_fp_convert_from_fixed_64_bit);
+DEF_INST(vector_fp_load_lengthened);
+DEF_INST(vector_fp_load_rounded);
+DEF_INST(vector_load_fp_integer);
+DEF_INST(vector_fp_compare_and_signal_scalar);
+DEF_INST(vector_fp_compare_scalar);
+DEF_INST(vector_fp_perform_sign_operation);
+DEF_INST(vector_fp_square_root);
+DEF_INST(vector_unpack_logical_low);
+DEF_INST(vector_unpack_logical_high);
+DEF_INST(vector_unpack_low);
+DEF_INST(vector_unpack_high);
+DEF_INST(vector_test_under_mask);
+DEF_INST(vector_element_compare_logical);
+DEF_INST(vector_element_compare);
+DEF_INST(vector_load_complement);
+DEF_INST(vector_load_positive);
+DEF_INST(vector_fp_subtract);
+DEF_INST(vector_fp_add);
+DEF_INST(vector_fp_divide);
+DEF_INST(vector_fp_multiply);
+DEF_INST(vector_fp_compare_equal);
+DEF_INST(vector_fp_compare_high_or_equal);
+DEF_INST(vector_fp_compare_high);
+DEF_INST(vector_average_logical);
+DEF_INST(vector_add_compute_carry);
+DEF_INST(vector_average);
+DEF_INST(vector_add);
+DEF_INST(vector_subtract_compute_borrow_indication);
+DEF_INST(vector_subtract);
+DEF_INST(vector_compare_equal);
+DEF_INST(vector_compare_high_logical);
+DEF_INST(vector_compare_high);
+DEF_INST(vector_minimum_logical);
+DEF_INST(vector_maximum_logical);
+DEF_INST(vector_minimum);
+DEF_INST(vector_maximum);
 #endif
 
 #if defined( FEATURE_145_INS_REF_BITS_MULT_FACILITY )

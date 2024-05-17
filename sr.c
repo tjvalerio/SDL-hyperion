@@ -222,6 +222,7 @@ BYTE     psw[16];
     SR_WRITE_VALUE (file,SR_SYS_SERVPARM,sysblk.servparm,sizeof(sysblk.servparm));
     SR_WRITE_VALUE (file,SR_SYS_SIGINTREQ,sysblk.sigintreq,1);
     SR_WRITE_VALUE (file,SR_SYS_IPLED,sysblk.ipled,1);
+    SR_WRITE_VALUE (file,SR_SYS_SFCMD,sysblk.sfcmd,1);
     SR_WRITE_STRING(file,SR_SYS_LOADPARM,str_loadparm());
     SR_WRITE_VALUE (file,SR_SYS_INTS_STATE,sysblk.ints_state,sizeof(sysblk.ints_state));
     SR_WRITE_HDR(file, SR_DELIMITER, 0);
@@ -257,8 +258,8 @@ BYTE     psw[16];
             SR_WRITE_VALUE(file, SR_CPU_CR+j, regs->CR_G(j),sizeof(regs->CR_G(0)));
         for (j = 0; j < 16; j++)
             SR_WRITE_VALUE(file, SR_CPU_AR+j, regs->ar[j],sizeof(regs->ar[0]));
-        for (j = 0; j < 32; j++)
-            SR_WRITE_VALUE(file, SR_CPU_FPR+j, regs->fpr[j],sizeof(regs->fpr[0]));
+        for (j = 0; j < 16; j++)
+            SR_WRITE_VALUE(file, SR_CPU_VFP_FPR+j, regs->FPR_L(j),sizeof(regs->FPR_L(0)));
         SR_WRITE_VALUE(file, SR_CPU_FPC, regs->fpc, sizeof(regs->fpc));
         SR_WRITE_VALUE(file, SR_CPU_DXC, regs->dxc, sizeof(regs->dxc));
         SR_WRITE_VALUE(file, SR_CPU_MC, regs->MC_G, sizeof(regs->MC_G));
@@ -711,6 +712,11 @@ int      numconfdev=0;
             sysblk.ipled = rc;
             break;
 
+        case SR_SYS_SFCMD:
+            SR_READ_VALUE(file, len, &rc, sizeof(rc));
+            sysblk.sfcmd = rc;
+            break;
+
         case SR_SYS_LOADPARM:
             SR_READ_STRING(file, buf, len);
             set_loadparm ((char *)buf);
@@ -863,41 +869,25 @@ int      numconfdev=0;
             SR_READ_VALUE(file, len, &regs->ar[i], sizeof(regs->ar[0]));
             break;
 
-        case SR_CPU_FPR_0:
-        case SR_CPU_FPR_1:
-        case SR_CPU_FPR_2:
-        case SR_CPU_FPR_3:
-        case SR_CPU_FPR_4:
-        case SR_CPU_FPR_5:
-        case SR_CPU_FPR_6:
-        case SR_CPU_FPR_7:
-        case SR_CPU_FPR_8:
-        case SR_CPU_FPR_9:
-        case SR_CPU_FPR_10:
-        case SR_CPU_FPR_11:
-        case SR_CPU_FPR_12:
-        case SR_CPU_FPR_13:
-        case SR_CPU_FPR_14:
-        case SR_CPU_FPR_15:
-        case SR_CPU_FPR_16:
-        case SR_CPU_FPR_17:
-        case SR_CPU_FPR_18:
-        case SR_CPU_FPR_19:
-        case SR_CPU_FPR_20:
-        case SR_CPU_FPR_21:
-        case SR_CPU_FPR_22:
-        case SR_CPU_FPR_23:
-        case SR_CPU_FPR_24:
-        case SR_CPU_FPR_25:
-        case SR_CPU_FPR_26:
-        case SR_CPU_FPR_27:
-        case SR_CPU_FPR_28:
-        case SR_CPU_FPR_29:
-        case SR_CPU_FPR_30:
-        case SR_CPU_FPR_31:
+        case SR_CPU_VFP_FPR_0:
+        case SR_CPU_VFP_FPR_1:
+        case SR_CPU_VFP_FPR_2:
+        case SR_CPU_VFP_FPR_3:
+        case SR_CPU_VFP_FPR_4:
+        case SR_CPU_VFP_FPR_5:
+        case SR_CPU_VFP_FPR_6:
+        case SR_CPU_VFP_FPR_7:
+        case SR_CPU_VFP_FPR_8:
+        case SR_CPU_VFP_FPR_9:
+        case SR_CPU_VFP_FPR_10:
+        case SR_CPU_VFP_FPR_11:
+        case SR_CPU_VFP_FPR_12:
+        case SR_CPU_VFP_FPR_13:
+        case SR_CPU_VFP_FPR_14:
+        case SR_CPU_VFP_FPR_15:
             SR_NULL_REGS_CHECK(regs);
-            i = key - SR_CPU_FPR;
-            SR_READ_VALUE(file, len, &regs->fpr[i], sizeof(regs->fpr[0]));
+            i = key - SR_CPU_VFP_FPR;
+            SR_READ_VALUE(file, len, &regs->FPR_L(i), sizeof(regs->FPR_L(0)));
             break;
 
         case SR_CPU_FPC:
