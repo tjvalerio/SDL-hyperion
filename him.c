@@ -151,13 +151,21 @@ struct io_cb {
     int max_q, attn_rc[4];
 };
 
-// Static variabled used by the code that waits for 
-// incoming server connections
-static  LOCK  ServerLock;
-static  int   ServerLockInitialized = FALSE;
-// Number of HIM devices waiting for a server connection
-static  int   ServerCount = 0;
-static  int   ServerThreadRunning = 0;
+// Static variables used by the code that waits for 
+// incoming TCP server connections
+static  LOCK  TCPServerLock;
+static  int   TCPServerLockInitialized = FALSE;
+// Number of HIM devices waiting for a TCP server connection
+static  int   TCPServerCount = 0;
+static  int   TCPServerThreadRunning = 0;
+
+// Static variables used by the code that waits for 
+// incoming UDP server connections
+static  LOCK  UDPServerLock;
+static  int   UDPServerLockInitialized = FALSE;
+// Number of HIM devices waiting for a UDP server connection
+static  int   UDPServerCount = 0;
+static  int   UDPServerThreadRunning = 0;
 
 static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data );
 static int parse_config_data( struct io_cb *cb_ptr, char *config_string, int cs_len );
@@ -176,9 +184,12 @@ typedef struct sserver_listen_thread_args
 }
 SSLTA;
 
-static void* sserver_listen_thread( void* arg );
-static int add_server_listener( DEVBLK *dev, struct io_cb *cb_ptr );
-static int remove_server_listener( struct io_cb *cb_ptr );
+static void* TCP_sserver_listen_thread( void* arg );
+static int add_TCP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr );
+static int remove_TCP_server_listener( struct io_cb *cb_ptr );
+static void* UDP_sserver_listen_thread( void* arg );
+static int add_UDP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr );
+static int remove_UDP_server_listener( struct io_cb *cb_ptr );
 static void set_state( struct io_cb *cb_ptr, t_state state );
 
 /*-------------------------------------------------------------------*/
@@ -192,21 +203,29 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
         return -1;
         
     // Initialize locking for the server data, if necessary.
-    if (!ServerLockInitialized)
+    if (!TCPServerLockInitialized)
     {
-        ServerLockInitialized = TRUE;
-        initialize_lock( &ServerLock );
+        TCPServerLockInitialized = TRUE;
+        initialize_lock( &TCPServerLock );
+    }
+    if (!UDPServerLockInitialized)
+    {
+        UDPServerLockInitialized = TRUE;
+        initialize_lock( &UDPServerLock );
     }
 
     /* If this is a reinit and the previous incarnation
        is a server waiting for a call, teminate the wait. */
     if ( dev->reinit )
     {
-        struct io_cb *cb_ptr = (struct io_cb *)dev->dev_data;
+        cb_ptr = (struct io_cb *)dev->dev_data;
         if ( cb_ptr->state == INITIALIZED &&
              cb_ptr->server && cb_ptr->sock <= 0 )
         {
-            remove_server_listener( cb_ptr );
+            if (cb_ptr->protocol == IPPROTO_TCP)
+                remove_TCP_server_listener( cb_ptr );
+            else
+                remove_UDP_server_listener( cb_ptr );
         }
     }
     /* Should set dev->devtype to something, but what?
@@ -231,7 +250,10 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     
     dev->himdev   = 1;
 
-    dev->dev_data = cb_ptr = malloc( sizeof( struct io_cb ) );
+    if ( dev-> reinit)
+        cb_ptr = (struct io_cb *)dev->dev_data;
+    else
+        dev->dev_data = cb_ptr = malloc( sizeof( struct io_cb ) );
     memset( (char *) dev->dev_data, '\0', sizeof( struct io_cb ) );
 
     /* The first optional parameter is the IP address to bind to */
@@ -313,11 +335,8 @@ static int him_close_device( DEVBLK *dev )
 
     /* If it is a server waiting for a call, terminate the wait */
     cb_ptr = (struct io_cb *) dev->dev_data;
-    if ( cb_ptr->server && cb_ptr->passive && cb_ptr->state == INITIALIZED )
-    {
-        remove_server_listener ( cb_ptr );
-    }
-
+    reset_io_cb( cb_ptr );
+    
     /* Free the I/O Control Block */
     free( dev->dev_data );
 
@@ -893,8 +912,16 @@ static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data
     /* Build the reply right on top of the configuration data */
     reply_ptr = (struct config_reply *) config_data;
 
-    if ( cb_ptr->state != SHUTDOWN  ||
-        !parse_config_data( cb_ptr, (char *) &config_data[4], cd_len) )
+    if ( cb_ptr->state != SHUTDOWN)
+    {
+        /* This really should be an error, but MTS is bad about not properly 
+           closing Him devices when it's done with them (especially MSource
+           devices */
+           debug_pf( "Config record in active state, reseting device\n" );
+           reset_io_cb( cb_ptr );
+    }
+    
+    if (!parse_config_data( cb_ptr, (char *) &config_data[4], cd_len) )
     {
         if ( cb_ptr->sock > 0 )
             (void) close_socket( cb_ptr->sock );
@@ -917,13 +944,21 @@ static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data
             /*  Set the destination port in the MTS header as well   */
             cb_ptr->mts_header.sh.tcp_header.th_dport = cb_ptr->sin.sin_port;
         }
-        else if ( cb_ptr->server && cb_ptr->passive &&
+        else if ( cb_ptr->server &&
                   cb_ptr->mts_header.sh.tcp_header.th_dport == 0 )
         {
             // A server listening on port zero
-            if (add_server_listener( dev, cb_ptr ) < 0)
-            {
-                goto failed;
+            if (cb_ptr->protocol == IPPROTO_UDP) {
+                if (add_UDP_server_listener( dev, cb_ptr ) < 0)
+                {
+                    goto failed;
+                }
+            }
+            else {
+                if (add_TCP_server_listener( dev, cb_ptr ) < 0)
+                {
+                    goto failed;
+                }
             }
         }
  
@@ -964,9 +999,12 @@ static void reset_io_cb(struct io_cb *cb_ptr)
     in_addr_t bind_addr;
 
     // If this is a server waiting for a call, terminate the wait
-    if ( cb_ptr->server && cb_ptr->passive && cb_ptr->state == INITIALIZED )
+    if ( cb_ptr->server && cb_ptr->state == INITIALIZED )
     {
-        remove_server_listener ( cb_ptr );
+            if (cb_ptr->protocol == IPPROTO_TCP)
+                remove_TCP_server_listener( cb_ptr );
+            else
+                remove_UDP_server_listener( cb_ptr );
     }
 
     bind_addr = cb_ptr->bind_addr;
@@ -976,6 +1014,7 @@ static void reset_io_cb(struct io_cb *cb_ptr)
     memset( (char *) cb_ptr, '\0', sizeof( struct io_cb ) );
     cb_ptr->sock = 0;
     cb_ptr->bind_addr = bind_addr;
+    cb_ptr->state = SHUTDOWN;
 }
 /*-------------------------------------------------------------------*/
 /* This routine uses the configuration string that MTS sends to      */
@@ -1100,6 +1139,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
  
 /*-------------------------------------------------------------------*/
 /* Get_Socket - allocate & bind a socket using TCP or UDP            */
+/* Returns -2 for adrress in use error and -1 for any other error    */
 /*-------------------------------------------------------------------*/
 static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
     struct sockaddr_in *sin, int qlen )
@@ -1110,6 +1150,7 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
        in_addr_t bind_addr        * Address to bind ot or INADDR_ANY           * 
        struct sockaddr_in *sin;   * will be returned with assigned port        *
        int qlen;                  * maximum length of the server request queue */
+       int rc;
  
     int s, socktype, optval;  /* socket descriptor and socket type   */
     struct sockaddr_in our_sin;
@@ -1139,6 +1180,7 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
     {    
         // ""%1d:%04X HIM: Error in function %s: %s"
         WRMSG( HHC01150, "E", LCSS_DEVNUM, "setsockopt()", strerror( HSO_errno ));
+        close_socket(s);
         return -1;
     }
  
@@ -1147,7 +1189,9 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
     {
         // ""%1d:%04X HIM: Error in function %s: %s"
         WRMSG( HHC01150, "E", LCSS_DEVNUM, "bind()", strerror( HSO_errno ));
-        return -1;
+        rc = HSO_errno;
+        close_socket(s);
+        return rc == HSO_EADDRINUSE ? -2 : -1;
     }
  
     /* Retrieve complete socket info */
@@ -1155,15 +1199,17 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
     {
         // ""%1d:%04X HIM: Error in function %s: %s"
         WRMSG( HHC01150, "E", LCSS_DEVNUM, "getsockname()", strerror( HSO_errno ));
+        close_socket(s);
         return -1;
     }
     else
-        debug_pf( "In get_socket(), port = %d\n", our_sin.sin_port );
+        debug_pf( "In get_socket(), port = %d\n", ntohs(our_sin.sin_port) );
  
     if ( socktype == SOCK_STREAM && qlen && listen( s, qlen ) < 0 )
     {
         // ""%1d:%04X HIM: Error in function %s: %s"
         WRMSG( HHC01150, "E", LCSS_DEVNUM, "listen()", strerror( HSO_errno ));
+        close_socket(s);
         return -1;
     }
  
@@ -1257,9 +1303,9 @@ static void* skt_thread( void* arg )
 
 
 /*-------------------------------------------------------------------*/
-/* Increment the count of server devices listening                   */
+/* Increment the count of TCP server devices listening                   */
 /*-------------------------------------------------------------------*/
-static int add_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
+static int add_TCP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
 {
     /* Increment the count of the number of HIM devices waiting
        for a server TCP connection and start the listener thread if 
@@ -1269,13 +1315,13 @@ static int add_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
     TID tid;
     int rc;
 
-    obtain_lock( &ServerLock );
+    obtain_lock( &TCPServerLock );
     
     // Increment the count of devices listening
-    ServerCount++;
+    TCPServerCount++;
     
     // Start the listener thread if it is not running.
-    if ( !ServerThreadRunning )
+    if ( !TCPServerThreadRunning )
     {
         SSLTA* sslta = malloc( sizeof( SSLTA ));
 
@@ -1283,19 +1329,62 @@ static int add_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
         sslta->cb_ptr = cb_ptr;
 
         /* First one, start the thread to listen for a connection */
-        rc = create_thread( &tid, DETACHED, sserver_listen_thread, 
-                     sslta, "him_listener" );
+        rc = create_thread( &tid, DETACHED, TCP_sserver_listen_thread, 
+                     sslta, "TCP_listener" );
         if ( rc )
         {
-            release_lock( &ServerLock );
+            release_lock( &TCPServerLock );
             // "Error in function create_thread(): %s"
             WRMSG( HHC00102, "E", strerror( rc ) );
             free( sslta );
             return 0;
         }
-        ServerThreadRunning = 1;
+        TCPServerThreadRunning = 1;
     }
-    release_lock( &ServerLock );
+    release_lock( &TCPServerLock );
+    return 1;
+}
+
+/*-------------------------------------------------------------------*/
+/* Increment the count of UDP server devices listening                   */
+/*-------------------------------------------------------------------*/
+static int add_UDP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
+{
+    /* Increment the count of the number of HIM devices waiting
+       for a server UDP connection and start the listener thread if 
+       it is not running.
+    */
+    
+    TID tid;
+    int rc;
+
+    obtain_lock( &UDPServerLock );
+    
+    // Increment the count of devices listening
+    UDPServerCount++;
+    
+    // Start the listener thread if it is not running.
+    if ( !UDPServerThreadRunning )
+    {
+        SSLTA* sslta = malloc( sizeof( SSLTA ));
+
+        sslta->dev    = dev;
+        sslta->cb_ptr = cb_ptr;
+
+        /* First one, start the thread to listen for a connection */
+        rc = create_thread( &tid, DETACHED, UDP_sserver_listen_thread, 
+                     sslta, "UDP_listener" );
+        if ( rc )
+        {
+            release_lock( &UDPServerLock );
+            // "Error in function create_thread(): %s"
+            WRMSG( HHC00102, "E", strerror( rc ) );
+            free( sslta );
+            return 0;
+        }
+        UDPServerThreadRunning = 1;
+    }
+    release_lock( &UDPServerLock );
     return 1;
 }
 
@@ -1304,21 +1393,24 @@ static int add_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
 /*-------------------------------------------------------------------*/
 static void set_state( struct io_cb *cb_ptr, t_state state )
 {
-    /* If the this is a server that is listening for a
+    /* If this is a server that is listening for a
        connection let the listener thread know it's gone */
-    if ( cb_ptr->server && cb_ptr->passive &&
+    if ( cb_ptr->server &&
          cb_ptr->state == INITIALIZED && state != INITIALIZED )
     {
-        remove_server_listener( cb_ptr);
+        if (cb_ptr->protocol == IPPROTO_TCP)
+            remove_TCP_server_listener( cb_ptr );
+        else
+            remove_UDP_server_listener( cb_ptr );
     }
     
     cb_ptr->state = state;
 }
 
 /*-------------------------------------------------------------------*/
-/* Decrement the count of server devices listening                  */
+/* Decrement the count of TCP server devices listening                  */
 /*-------------------------------------------------------------------*/
-static int remove_server_listener( struct io_cb *cb_ptr )
+static int remove_TCP_server_listener( struct io_cb *cb_ptr )
 {
     UNREFERENCED( cb_ptr );
     
@@ -1326,39 +1418,90 @@ static int remove_server_listener( struct io_cb *cb_ptr )
        If the count goes to zero the listener thread will notice and stop.
     */
     
-    obtain_lock( &ServerLock );
+    obtain_lock( &TCPServerLock );
     
     // Decrement the count of devices listening
-    ServerCount--;
+    TCPServerCount--;
     
     // Don't let it be less than zero
-    if ( ServerCount < 0 )
-        ServerCount = 0;
+    if ( TCPServerCount < 0 )
+        TCPServerCount = 0;
     
-    release_lock( &ServerLock );
+    release_lock( &TCPServerLock );
     return 1;
 }
 
 /*-------------------------------------------------------------------*/
-/* Thread to listen for incoming server connections                  */
+/* Decrement the count of UDP server devices listening                  */
 /*-------------------------------------------------------------------*/
-static void* sserver_listen_thread( void* arg )
+static int remove_UDP_server_listener( struct io_cb *cb_ptr )
+{
+    UNREFERENCED( cb_ptr );
+    
+    /* Decrement the count of HIM devices waiting for a server connection.
+       If the count goes to zero the listener thread will notice and stop.
+    */
+    
+    obtain_lock( &UDPServerLock );
+    
+    // Decrement the count of devices listening
+    UDPServerCount--;
+    
+    // Don't let it be less than zero
+    if ( UDPServerCount < 0 )
+        UDPServerCount = 0;
+    
+    release_lock( &UDPServerLock );
+    return 1;
+}
+
+/*-------------------------------------------------------------------*/
+/* Thread to listen for incoming TCP server connections                  */
+/*-------------------------------------------------------------------*/
+static void* TCP_sserver_listen_thread( void* arg )
 {   
     /* Table of ports to listen on.  This should agree with the
        contents of HOST:SPVT_LCS*SQ on MTS.  This maps port numbers
        to MTS server names.  If a connection is made on a port not
        in this table a server named "TCPnnn" will be started. 
+       
+       Here is the info from SPVT and NSERVTBL for TCP ports
+       
+       TCP ports in SPVT
+        7       Echo
+        9       Discard 
+        20      FTP-Data
+        23      Telnet
+        25      SMTP    POST:SMTP-CMD
+        79      Finger  SERV:FINGER
+        109     POP2    POP:POP2.CMD (commented out)
+        110     POP3    POP:POP3.CMD
+        143     Imap2   POP:IMAP2.CMD (commented out)
+        220     Imap3   POP:IMAP3.CMD (commented out)
+        1010    (blank server name) LPDO
+        1011    (blank server name) LPDO
+        1309    (blank server name) LPDO
+        2110    POP3Test POP:POP3.TEST
+        3217    (blank server name) LPDO
+        4242    Testing
+        
+        TCP Ports not in SPVT
+        2025            POST,POST:SMTP-TEST
+        2026            MOC.:check_vitals
+        2110            POP:POP3.TEST (Duplicate)
+        9998            ASRV:ACCSERV*C
+
     */
-    #define PORT_COUNT 12
-    u_short ports[PORT_COUNT] = {23, 25, 79, 109, 110, 220, 9998,
-                                 2025, 2026, 2110, 2026, 4242};
-    int sockets[PORT_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    #define TCP_PORT_COUNT 17
+    u_short ports[TCP_PORT_COUNT] = {23, 25, 79, 109, 110, 143, 220, 1010, 
+                    1011, 1309, 2110, 3217, 4242, 2025, 2026, 2110, 9998};
+    int sockets[TCP_PORT_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     int max_socket = 0;
-    int i;
+    int i, j;
     
     fd_set socket_set;      /* set of sockets to listen on */
     
-    /* Retieve arguments */
+    /* Retrieve arguments */
     SSLTA* sslta = arg;
     DEVBLK *dev           = sslta->dev;
     struct io_cb *cb_ptr  = sslta->cb_ptr;
@@ -1366,10 +1509,9 @@ static void* sserver_listen_thread( void* arg )
 
     max_socket = 0;
     FD_ZERO( &socket_set );
-    for (i=0; i<PORT_COUNT; i++)
+    for (i=0; i<TCP_PORT_COUNT; i++)
     {
         int s;
-        /* struct io_cb *cb_ptr = (struct io_cb *) arg; */
         s = get_socket( dev, IPPROTO_TCP, cb_ptr->bind_addr, htons( ports[i] ),
                         NULL, QLEN ); 
         if  ( s<0 )
@@ -1398,21 +1540,21 @@ static void* sserver_listen_thread( void* arg )
         struct io_cb *cb_ptr;
         
         /* See if we should quit */
-        obtain_lock( &ServerLock );
-        if ( ServerCount == 0 )
+        obtain_lock( &TCPServerLock );
+        if ( TCPServerCount == 0 )
         {
             /* We're done, clean up and go home */
-            for (i=0; i<PORT_COUNT; i++)
+            for (i=0; i<TCP_PORT_COUNT; i++)
             {
                 if ( sockets[i] != 0 )
                     (void) close_socket( sockets[i] );
                 sockets[i] = 0;
             }
-            ServerThreadRunning = 0;
-            release_lock( &ServerLock );
+            TCPServerThreadRunning = 0;
+            release_lock( &TCPServerLock );
             break;  // and exit
         }
-        release_lock( &ServerLock );
+        release_lock( &TCPServerLock );
     
         listen_set = socket_set;
         rc = pselect ( max_socket+1, &listen_set, NULL, NULL, &slowpoll, NULL);
@@ -1430,7 +1572,7 @@ static void* sserver_listen_thread( void* arg )
         }
         
         /* See which ports have pending connections */
-        for (i=0; i<PORT_COUNT; i++)
+        for (i=0; i<TCP_PORT_COUNT; i++)
         {
             if ( FD_ISSET( sockets[i], &listen_set ))
             {
@@ -1449,13 +1591,14 @@ static void* sserver_listen_thread( void* arg )
                             /* Couldn't lock device, skip it */
                             continue;
                         /* Now that it's locked see if it is a server HIM
-                           device waiting for a connection */
+                           device waiting for a TCP connection */
                         cb_ptr = (struct io_cb *) dev->dev_data;
                         if ( dev->allocated &&
                              dev->himdev &&
                              cb_ptr->server &&
                              cb_ptr->passive &&
                              cb_ptr->state == INITIALIZED &&
+                             cb_ptr->protocol == IPPROTO_TCP &&
                              cb_ptr->sock <= 0
                              )
                             break;      // from device loop
@@ -1467,11 +1610,11 @@ static void* sserver_listen_thread( void* arg )
                     /* couldn't find a device.  This shouldn't happen, but if
                        it does just try again later. */
                     usleep( 100000); /* wait 1/10 second */
-                    break;           /* back to the pselect loop */
+                    break;           /* back to the port loop */
                 }
                 
                 /* Accept the connection and assign the socket to
-                   the watiing HIM device.  The device is locked. */
+                   the waiting HIM device.  The device is locked. */
                 csock = accept( sockets[i], 
                                 (struct sockaddr *)&cb_ptr->sin, 
                                 &sinlen);
@@ -1506,11 +1649,208 @@ static void* sserver_listen_thread( void* arg )
                 cb_ptr->mts_header.sh.tcp_header.th_dport = our_sin.sin_port;
                 
                 /* Queue an MSS acknowledgement */
-                for ( i = 0; cb_ptr->read_q[i] != EMPTY; i++ ) ;
-                cb_ptr->read_q[i] = MSS;
+                for ( j = 0; cb_ptr->read_q[j] != EMPTY; j++ ) ;
+                cb_ptr->read_q[j] = MSS;
                 
                 /* Unlock the device and queue an attention interrupt */
                 release_lock( &dev->lock );
+                /* This MTS job is no longer waiting for a call. */
+                remove_TCP_server_listener(cb_ptr);                
+                rc = device_attention (dev, CSW_ATTN);
+                ((struct io_cb *)dev->dev_data)->attn_rc[rc]++;
+            }
+        }
+    }
+    return 0;
+}
+
+/*-------------------------------------------------------------------*/
+/* Thread to listen for incoming UDP server connections                  */
+/*-------------------------------------------------------------------*/
+static void* UDP_sserver_listen_thread( void* arg )
+{   
+    /* Table of ports to listen on.  This should agree with the
+       contents of HOST:SPVT_LCS*SQ on MTS.  This maps port numbers
+       to MTS server names.  If a connection is made on a port not
+       in this table a server named "UDPnnn" will be started. 
+       
+       Here is the info from SPVT and NSERVTBL for UDP ports
+       
+        (None in SPVT)
+        7		UDP.:ECHO*C
+        9		UDP.:DISCARD*C
+        11		UDP.:USERS*C
+        13		UDP.:DAYTIME*C
+        15		UDP.:NETSTAT*C
+        17		UDP.:QUOTE*C
+        19		UDP.:CHARGEN*C
+        37		UDP.:TIME*C
+        42		UDP.:NAMESERV*C
+        53		UDP.:DOMAIN*C
+        59		UDP.:MACEFSIP*C
+        69		UDP.:TFTP*C
+        79		UDP.:FINGER*C
+        123		UDP.:NTP*C
+        129		UDP.:PWDGEN*C
+        424     AUTH,AUTH:UDPSERV
+
+    */
+    #define UDP_PORT_COUNT 15
+    u_short ports[UDP_PORT_COUNT] = {7, 9, 11, 13, 15, 17, 19, 37, 42, 53, 59, 
+                                    69, 79, 123, 129};
+    int sockets[UDP_PORT_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    int max_socket = 0;
+    int i;
+    int retry_count;
+    
+    fd_set socket_set;      /* set of sockets to listen on */
+    
+    /* Retrieve arguments */
+    SSLTA* sslta = arg;
+    DEVBLK *dev           = sslta->dev;
+    struct io_cb *cb_ptr  = sslta->cb_ptr;
+    free( sslta );
+
+    max_socket = 0;
+    FD_ZERO( &socket_set );
+    retry_count = 0;
+    
+    /* Listen for an incoming connection until there are no more servers */
+    for (;;)
+    {
+        /* See if we should quit */
+        obtain_lock( &UDPServerLock );
+        if ( UDPServerCount == 0 )
+        {
+            /* We're done, clean up and go home */
+            for (i=0; i<UDP_PORT_COUNT; i++)
+            {
+                if ( sockets[i] != 0 )
+                    (void) close_socket( sockets[i] );
+                sockets[i] = 0;
+            }
+            UDPServerThreadRunning = 0;
+            release_lock( &UDPServerLock );
+            break;  // and exit
+        }
+        release_lock( &UDPServerLock );
+    
+        /* get a socket for any missing port */
+        for (i=0; i<UDP_PORT_COUNT; i++)
+        {
+            if (sockets[i] == 0 || (sockets[i] < 0 && retry_count <= 0)) {
+                int s;
+                s = get_socket( dev, IPPROTO_UDP, cb_ptr->bind_addr, htons( ports[i] ),
+                                NULL, QLEN ); 
+                if  ( s<0 )
+                {
+                    /* Couldn't get a socket, skip it, a message will have sent */
+                    if (s == -1)
+                        /* A fatal error, don't try again soon */
+                        sockets[i] = -1;
+                    else
+                        /* Already have a socket for this port. */
+                        sockets[i] = 0;
+                }
+                else
+                {
+                    sockets[i] = s;
+                    if ( s>max_socket )
+                        max_socket = s;
+                    FD_SET( s, &socket_set );
+                    /* Make it non-blocking since we don't want to wait while
+                       we are holding a lock */
+                    socket_set_blocking_mode( s, 0 );
+                }
+            }
+        }
+        /* Adjust the retry count that controls how oftern we retry failures */
+        if (--retry_count <0)
+            retry_count = 10;
+            
+        struct timespec slowpoll = { 0, 100000000 };         /* 100ms */
+        fd_set listen_set;
+        int rc;
+        struct io_cb *cb_ptr;
+        
+        listen_set = socket_set;
+        rc = pselect ( max_socket+1, &listen_set, NULL, NULL, &slowpoll, NULL);
+        
+        if ( rc == 0 )
+            /* Nothing ready */
+            continue;
+            
+        if ( rc < 0)
+        {
+            // ""%1d:%04X HIM: Error in function %s: %s"
+            WRMSG( HHC01150, "E", LCSS_DEVNUM, "pselect()", strerror( HSO_errno ));
+            usleep( 50000 ); // (wait a bit; maybe it'll fix itself??)            
+            continue;
+        }
+        
+        /* See which ports have pending connections */
+        for (i=0; i<UDP_PORT_COUNT; i++)
+        {
+            if ( sockets[i] > 0 && FD_ISSET( sockets[i], &listen_set ))
+            {
+                /* incoming data, find a HIM device for it */
+                DEVBLK *dev;
+                int csock;
+                struct sockaddr_in our_sin;
+                unsigned int sinlen = sizeof( struct sockaddr_in );
+                
+                for (dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev)
+                {
+                    if (dev->allocated && dev->himdev)
+                    {
+                        /* Seems to be a HIM device, take a closer look. */
+                        if (try_obtain_lock( &dev->lock ))
+                            /* Couldn't lock device, skip it */
+                            continue;
+                        /* Now that it's locked see if it is a server HIM
+                           device waiting for a UDP connection */
+                        cb_ptr = (struct io_cb *) dev->dev_data;
+                        if ( dev->allocated &&
+                             dev->himdev &&
+                             cb_ptr->server &&
+                             cb_ptr->state == INITIALIZED &&
+                             cb_ptr->protocol == IPPROTO_UDP &&
+                             cb_ptr->sock <= 0
+                             )
+                            break;      // from device loop
+                        release_lock( &dev->lock );
+                    }
+                }   // End of device loop
+                if (dev == 0)
+                {
+                    /* couldn't find a device.  This shouldn't happen, but if
+                       it does just try again later. */
+                    usleep( 100000); /* wait 1/10 second */
+                    break;           /* back to the port loop */
+                }
+
+                csock = sockets[i];
+                sockets[i] = 0;
+                /* have a connection socket, do something with it */
+                set_state( cb_ptr, CONNECTED );
+                cb_ptr->sock = csock;
+ 
+                // Save the address and port of the remote host
+                cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.Sin_Addr;
+                cb_ptr->mts_header.sh.udp_header.uh_sport = cb_ptr->sin.sin_port;
+                // Also save the address and port of our end
+                if ( getsockname( csock, (struct sockaddr *)&our_sin, &sinlen ) < 0 )
+                {
+                    // ""%1d:%04X HIM: Error in function %s: %s"
+                    WRMSG( HHC01150, "W", LCSS_DEVNUM, "getsockname()", strerror( HSO_errno ));
+                }
+                cb_ptr->mts_header.ip_header.ip_dst = our_sin.Sin_Addr;
+                cb_ptr->mts_header.sh.udp_header.uh_dport = our_sin.sin_port;
+                
+                /* Unlock the device and queue an attention interrupt */
+                release_lock( &dev->lock );
+                /* This MTS job is no longer waiting for a call. */
+                remove_UDP_server_listener(cb_ptr);                
                 rc = device_attention (dev, CSW_ATTN);
                 ((struct io_cb *)dev->dev_data)->attn_rc[rc]++;
             }
