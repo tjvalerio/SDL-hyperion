@@ -3750,6 +3750,18 @@
 						RelativePath=".\tests\zvector-e6-19-VCSPH.core"
 						>
 					</File>
+					<File
+						RelativePath=".\tests\zvector-e7-01-MinMaxAvg.core"
+						>
+					</File>
+					<File
+						RelativePath=".\tests\zvector-e7-02-VGFM.core"
+						>
+					</File>
+					<File
+						RelativePath=".\tests\zvector-e7-03-VGFMA.core"
+						>
+					</File>
 				</Filter>
 				<Filter
 					Name="scripts"
@@ -5033,6 +5045,18 @@
 							RelativePath=".\tests\zvector-e6-19-VCSPH.tst"
 							>
 						</File>
+						<File
+							RelativePath=".\tests\zvector-e7-01-MinMaxAvg.tst"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\zvector-e7-02-VGFM.tst"
+							>
+						</File>
+						<File
+							RelativePath=".\tests\zvector-e7-03-VGFMA.tst"
+							>
+						</File>
 						<Filter
 							Name="subtst"
 							>
@@ -5471,6 +5495,18 @@
 						</File>
 						<File
 						RelativePath=".\tests\zvector-e6-19-VCSPH.asm"
+						>
+						</File>
+						<File
+						RelativePath=".\tests\zvector-e7-01-MinMaxAvg.asm"
+						>
+						</File>
+						<File
+						RelativePath=".\tests\zvector-e7-02-VGFM.asm"
+						>
+						</File>
+						<File
+						RelativePath=".\tests\zvector-e7-03-VGFMA.tst"
 						>
 						</File>
 						<Filter
@@ -6198,6 +6234,30 @@
 							</File>
 							<File
 							RelativePath=".\tests\zvector-e6-19-VCSPH.pdf"
+							>
+							</File>
+							<File
+							RelativePath=".\tests\zvector-e7-01-MinMaxAvg.list"
+							>
+							</File>
+							<File
+							RelativePath=".\tests\zvector-e7-01-MinMaxAvg.pdf"
+							>
+							</File>
+							<File
+							RelativePath=".\tests\zvector-e7-02-VGFM.list"
+							>
+							</File>
+							<File
+							RelativePath=".\tests\zvector-e7-02-VGFM.pdf"
+							>
+							</File>
+							<File
+							RelativePath=".\tests\zvector-e7-03-VGFMA.list"
+							>
+							</File>
+							<File
+							RelativePath=".\tests\zvector-e7-03-VGFMA.pdf"
 							>
 							</File>
 						</Filter>
