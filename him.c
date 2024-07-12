@@ -1788,7 +1788,7 @@ static void* UDP_sserver_listen_thread( void* arg )
             continue;
         }
         
-        /* See which ports have pending connections */
+        /* See which ports have pending input */
         for (i=0; i<UDP_PORT_COUNT; i++)
         {
             if ( sockets[i] > 0 && FD_ISSET( sockets[i], &listen_set ))
@@ -1798,6 +1798,8 @@ static void* UDP_sserver_listen_thread( void* arg )
                 int csock;
                 struct sockaddr_in our_sin;
                 unsigned int sinlen = sizeof( struct sockaddr_in );
+                char shortbuf[32];
+                size_t readlen;
                 
                 for (dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev)
                 {
@@ -1835,6 +1837,11 @@ static void* UDP_sserver_listen_thread( void* arg )
                 set_state( cb_ptr, CONNECTED );
                 cb_ptr->sock = csock;
  
+                // Peek at the first packet since it contains the 
+                // IP address and port number of the source
+                readlen = recvfrom( cb_ptr->sock, &shortbuf, 32, MSG_PEEK,
+                    (struct sockaddr *)&cb_ptr->sin, &sinlen );
+
                 // Save the address and port of the remote host
                 cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.Sin_Addr;
                 cb_ptr->mts_header.sh.udp_header.uh_sport = cb_ptr->sin.sin_port;
