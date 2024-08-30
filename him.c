@@ -1,5 +1,5 @@
-/* HIM.C        (c) Copyright Thomas J. Valerio, 2023                */
-/*              (c) Copyright Michael T. Alexander, 2023             */
+/* HIM.C        (c) Copyright Thomas J. Valerio, 2024                */
+/*              (c) Copyright Michael T. Alexander, 2024             */
 /*              ESA/390 Host Interface Machine Device Handler        */
 /*                                                                   */
 /*   Released under "The Q Public License Version 1"                 */
@@ -18,6 +18,7 @@
 /* over the Internet.                                                */
 /*-------------------------------------------------------------------*/
 
+
 #include "hstdinc.h"
 #include "hercules.h"
 #include "devtype.h"
@@ -25,17 +26,17 @@
 // If set writes debug output to FD 5 otherwise uses TRACE
 //#define WRITEDBG
 
-// If ENABLE_TRACING_STMTS is undefiined it will be 
-// set baed on the debug flag, tracing only in a debug build
+// If ENABLE_TRACING_STMTS is undefined it will be set
+// based on the debug flag, tracing only in a debug build
 //#define ENABLE_TRACING_STMTS 1
 #include "dbgtrace.h"
 
-#if defined( _MSVC_ )
-  #include "netsupp.h"              // (networking structs and funcs)
+#if defined( _MSVC_ )        // MS Windows
+  #include "netsupp.h"       // (networking structs and funcs)
   #define Sin_Addr sin_addr.s_addr
   #define Ip_Src ip_src
   #define Ip_Dst ip_dst
-#else // unix/linux
+#else                        // unix/linux/Mac_OS
   #define __FAVOR_BSD
   #include <netinet/ip.h>
   #include <netinet/tcp.h>
@@ -71,7 +72,7 @@ struct buff_hdr {
     u_char buffer_number;              /* Sequential buffer number   */
     u_short buffer_length;             /* buffer length              */
 };
- 
+
 
 /*-------------------------------------------------------------------*/
 /* This is the full packet header for all of the subchannel read     */
@@ -79,7 +80,7 @@ struct buff_hdr {
 /* DSP buffer header defined above, as well as the IP packet header  */
 /* and the TCP and UDP packet headers.                               */
 /*-------------------------------------------------------------------*/
-#if defined( _MSVC_ )
+#if defined( _MSVC_ )        // MS Windows
 struct packet_hdr {
     struct buff_hdr him_hdr;
     struct ip_hdr ip_header;
@@ -91,7 +92,7 @@ struct packet_hdr {
     u_char tcp_optlen;
     u_short tcp_optval;
 };
-#else // unix/linux
+#else                        // unix/linux/Mac_OS
 struct packet_hdr {
     struct buff_hdr him_hdr;
     struct ip ip_header;
@@ -123,7 +124,7 @@ struct config_reply {
     u_char remote_ip[4];
 };
 
- 
+
 /*-------------------------------------------------------------------*/
 /* The I/O control block                                             */
 /*-------------------------------------------------------------------*/
@@ -141,28 +142,31 @@ struct io_cb {
     unsigned int unused_1   : 1;
     unsigned int unused_2   : 1;
     struct sockaddr_in sin;
-    in_addr_t bind_addr;              /* The address to bind to, may be INADDR_ANY */   
-    in_addr_t our_addr;               /* The address we actually bound to */
-    /* mts_header is the header to be returned to MTS for a packet read 
-       from the net.  THe source address is the remote address and the destination
-       address is MTS's address. */
+    in_addr_t bind_addr;             /* The address to bind to, may be INADDR_ANY */
+    in_addr_t our_addr;              /* The address we actually bound to */
+    /* mts_header is the header to be returned to MTS for a packet read
+       from the net.  The source address is the remote address and the
+       destination address is MTS's address. */
     struct packet_hdr mts_header;
     enum {EMPTY, CONFIG, MSS, ACK, FIN, FINISHED} read_q[16];
     int max_q, attn_rc[4];
 };
 
-// Static variables used by the code that waits for 
+
+// Static variables used by the code that waits for
 // incoming TCP server connections
 static  LOCK  TCPServerLock;
 static  int   TCPServerLockInitialized = FALSE;
+
 // Number of HIM devices waiting for a TCP server connection
 static  int   TCPServerCount = 0;
 static  int   TCPServerThreadRunning = 0;
 
-// Static variables used by the code that waits for 
+// Static variables used by the code that waits for
 // incoming UDP server connections
 static  LOCK  UDPServerLock;
 static  int   UDPServerLockInitialized = FALSE;
+
 // Number of HIM devices waiting for a UDP server connection
 static  int   UDPServerCount = 0;
 static  int   UDPServerThreadRunning = 0;
@@ -192,23 +196,24 @@ static int add_UDP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr );
 static int remove_UDP_server_listener( struct io_cb *cb_ptr );
 static void set_state( struct io_cb *cb_ptr, t_state state );
 
+
 /*-------------------------------------------------------------------*/
 /* Initialize the device handler                                     */
 /*-------------------------------------------------------------------*/
 static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
 {
     struct io_cb *cb_ptr;
-    
-    if (argc > 1)
+
+    if ( argc > 1 )
         return -1;
-        
+
     // Initialize locking for the server data, if necessary.
-    if (!TCPServerLockInitialized)
+    if ( !TCPServerLockInitialized )
     {
         TCPServerLockInitialized = TRUE;
         initialize_lock( &TCPServerLock );
     }
-    if (!UDPServerLockInitialized)
+    if ( !UDPServerLockInitialized )
     {
         UDPServerLockInitialized = TRUE;
         initialize_lock( &UDPServerLock );
@@ -222,7 +227,7 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
         if ( cb_ptr->state == INITIALIZED &&
              cb_ptr->server && cb_ptr->sock <= 0 )
         {
-            if (cb_ptr->protocol == IPPROTO_TCP)
+            if ( cb_ptr->protocol == IPPROTO_TCP )
                 remove_TCP_server_listener( cb_ptr );
             else
                 remove_UDP_server_listener( cb_ptr );
@@ -231,7 +236,7 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     /* Should set dev->devtype to something, but what?
        It must be a hex number equal to an IBM model number. */
     dev->devtype = 0;
-    
+
     /* Set length of buffer */
     dev->bufsize = 2048;
 
@@ -247,27 +252,28 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
     dev->devid[5] = dev->devtype & 0xFF;
     dev->devid[6] = 0x01;
     dev->numdevid = 7;
-    
+
     dev->himdev   = 1;
 
-    if ( dev-> reinit)
+    if ( dev->reinit )
         cb_ptr = (struct io_cb *)dev->dev_data;
     else
         dev->dev_data = cb_ptr = malloc( sizeof( struct io_cb ) );
+
     memset( (char *) dev->dev_data, '\0', sizeof( struct io_cb ) );
 
     /* The first optional parameter is the IP address to bind to */
-    if (argc >= 1)
+    if ( argc >= 1 )
     {
         struct in_addr addr;
-        if (inet_aton(argv[0], &addr) < 1)
+        if ( inet_aton(argv[0], &addr) < 1 )
         {
             /* "Invalid %s parameter: %s" */
             WRMSG( HHC02781, "E", "IP address", argv[0]);
             return -1;
         }
         cb_ptr->bind_addr = addr.s_addr;
-    } 
+    }
     else
     {
         /* Bind to any address, will get set to actual address
@@ -282,9 +288,10 @@ static int him_init_handler( DEVBLK *dev, int argc, char *argv[] )
         dev->typname, dev->devnum, __TIME__, __DATE__ );
 
     /* Activate I/O tracing */
-//  dev->ccwtrace = 1;
+    // dev->ccwtrace = 1;
 
     return 0;
+
 } /* end function him_init_handler */
 
 
@@ -322,6 +329,7 @@ static void him_halt_device( DEVBLK *dev )
     gettimeofday( &tv, NULL ); secs = tv.tv_sec;
     strftime( ts_buf, sizeof( ts_buf ), "%H:%M:%S", localtime( &secs ) );
     debug_pf( " %s.%06d -- devnum %04X HALT\n", ts_buf, tv.tv_usec, dev->devnum );
+
 } /* end function him_halt_device */
 
 
@@ -337,7 +345,7 @@ static int him_close_device( DEVBLK *dev )
     /* If it is a server waiting for a call, terminate the wait */
     cb_ptr = (struct io_cb *) dev->dev_data;
     reset_io_cb( cb_ptr );
-    
+
     /* Free the I/O Control Block */
     free( dev->dev_data );
 
@@ -354,7 +362,7 @@ static void him_cpe_device( DEVBLK *dev )
 {
     UNREFERENCED( dev );
 
-}
+} /* end function him_cpe_device */
 
 
 /*-------------------------------------------------------------------*/
@@ -452,7 +460,7 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
                 cb_ptr->sin.sin_port = buff_ptr->sh.udp_header.uh_dport;
                 cb_ptr->sin.Sin_Addr = buff_ptr->ip_header.ip_dst;
                 writelen = ntohs( buff_ptr->him_hdr.buffer_length ) - 28;
- 
+
                 if ( sendto( cb_ptr->sock, &((char *) buff_ptr)[32], writelen, 0,
                     (struct sockaddr *)&cb_ptr->sin, sizeof( struct sockaddr_in ) ) < 0 )
                     // ""%1d:%04X HIM: Error in function %s: %s"
@@ -465,27 +473,27 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
             /* first packet is the signal that we should get         */
             /* connected.  The first packet also contains the        */
             /* destination address that we need to connect.          */
- 
+
             if ( cb_ptr->state == INITIALIZED )
             {
                 cb_ptr->mts_header.ip_header.ip_src =
                     cb_ptr->sin.Sin_Addr = buff_ptr->ip_header.ip_dst;
                 cb_ptr->mts_header.sh.tcp_header.th_sport =
                     cb_ptr->sin.sin_port = buff_ptr->sh.tcp_header.th_dport;
-/* don't set the dest addr in mts_header, the TCP DSP doesn't 
+/* don't set the dest addr in mts_header, the TCP DSP doesn't
    set the source address in the buffer correctly and it's already been set. */
 #if 0
                 cb_ptr->mts_header.ip_header.ip_dst = buff_ptr->ip_header.ip_src;
-                cb_ptr->mts_header.sh.tcp_header.th_dport = 
+                cb_ptr->mts_header.sh.tcp_header.th_dport =
                     buff_ptr->sh.tcp_header.th_sport;
 #endif
 
                 if ( connect( cb_ptr->sock,
-                    (struct sockaddr *)&cb_ptr->sin, sizeof( struct sockaddr_in ) ) < 0 ) 
+                    (struct sockaddr *)&cb_ptr->sin, sizeof( struct sockaddr_in ) ) < 0 )
                     /* TODO: If connect fails signal error to MTS */
                     // ""%1d:%04X HIM: Error in function %s: %s"
                     WRMSG( HHC01150, "E", LCSS_DEVNUM, "connect()", strerror( HSO_errno ));
- 
+
                 set_state( cb_ptr, CONNECTED );
 
                 /* Queue an MSS acknowledgement */
@@ -501,11 +509,11 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
 
                 offset = ( ( buff_ptr->ip_header.ip_hl +
                     buff_ptr->sh.tcp_header.th_off ) * 4 ) + 4;
- 
+
                 writelen = ntohs( buff_ptr->him_hdr.buffer_length ) - offset + 4;
                 cb_ptr->mts_header.sh.tcp_header.th_ack =
                     htonl( ntohl( cb_ptr->mts_header.sh.tcp_header.th_ack ) + writelen );
- 
+
                 if ( writelen > 0 )
                 {
                     if ( cb_ptr->state == CONNECTED )
@@ -537,7 +545,7 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
                 }
             }
         }
- 
+
         break;
 
 
@@ -550,7 +558,7 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
         readlen = 0;
         *residual = count;
         *unitstat = CSW_CE | CSW_DE;
- 
+
         read_chk.fd = cb_ptr->sock;
         read_chk.events = POLLIN;
 
@@ -625,9 +633,10 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
             debug_pf( " ------ READ ccw, STATE = CLOSING\n" );
 
         }
-        else if ( !poll(&read_chk, 1, 10) )  /* i.e. no data available from the socket */
+        else if ( !poll( &read_chk, 1, 10 ) )  /* i.e. no data available from the socket */
         {
             *unitstat |= CSW_UX;
+
         }
         else if ( cb_ptr->protocol == IPPROTO_UDP )
         {
@@ -638,8 +647,8 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
 
             readlen = recvfrom( cb_ptr->sock, &((char *) buff_ptr)[32], 1460, 0,
                 (struct sockaddr *)&cb_ptr->sin, &sinlen );
- 
-            buff_ptr->him_hdr.buffer_length = 
+
+            buff_ptr->him_hdr.buffer_length =
                 buff_ptr->ip_header.ip_len = htons( readlen + 28 );
 
             buff_ptr->ip_header.ip_src = cb_ptr->sin.Sin_Addr;
@@ -653,10 +662,10 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
         {
             temp_sock = cb_ptr->sock;
             cb_ptr->sock = accept( temp_sock, (struct sockaddr *)&cb_ptr->sin, &sinlen );
- 
+
             (void) close_socket( temp_sock );
             set_state( cb_ptr, CONNECTED );
- 
+
             getpeername( cb_ptr->sock, (struct sockaddr *)&cb_ptr->sin, &sinlen );
             cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.Sin_Addr;
             cb_ptr->mts_header.sh.tcp_header.th_sport = cb_ptr->sin.sin_port;
@@ -664,6 +673,7 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
             *residual -= return_mss( cb_ptr, buff_ptr );
 
             debug_pf( "just accepted call on socket %d for socket %d\n", temp_sock, cb_ptr->sock );
+
         }
         else if ( cb_ptr->state == CONNECTED ) /* A UDP connection will never be in this state */
         {
@@ -671,10 +681,10 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
             cb_ptr->mts_header.ip_header.ip_id =
                 htons( ntohs( cb_ptr->mts_header.ip_header.ip_id ) + 1 );
             memcpy( buff_ptr, &cb_ptr->mts_header, 44 );
- 
+
             buff_ptr->sh.tcp_header.th_flags |= TH_PUSH;
             readlen = recv( cb_ptr->sock, &((char *) buff_ptr)[44], 1460, 0 );
- 
+
             if ( readlen > 0 )
             {
                 cb_ptr->mts_header.sh.tcp_header.th_seq =
@@ -698,7 +708,7 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
                 debug_pf( " --- cb_ptr->state == CONNECTED, read rc = %i, errno = %d\n",
                    readlen, errno );
                 dumpdata( "I/O cb", (BYTE *)cb_ptr, sizeof( struct io_cb ) );
- 
+
                 buff_ptr->sh.tcp_header.th_flags |= TH_RST;
                 *residual -= 44;
                 *unitstat |= CSW_UC;
@@ -709,6 +719,7 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
             *unitstat |= CSW_UX;
 
             debug_pf( "READ ccw, STATE = %d\n", cb_ptr->state );
+
         }
 
         /* don't start the socket thread if there is no socket.
@@ -771,7 +782,7 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
 
         cb_ptr->unused_0 = 0;
         debug_pf( "------- Exited CONTROL-WAIT after %d seconds\n", i );
- 
+
         *residual = 0;
         *unitstat = CSW_CE | CSW_DE;
         break;
@@ -835,32 +846,33 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
 
 
 static DEVHND him_device_hndinfo = {
-        &him_init_handler,             /* Device Initialisation      */
-        &him_execute_ccw,              /* Device CCW execute         */
-        &him_close_device,             /* Device Close               */
-        &him_query_device,             /* Device Query               */
-        NULL,                          /* Device Extended Query      */
-        NULL,                          /* Device Start channel pgm   */
-        &him_cpe_device,               /* Device End channel pgm     */
-        NULL,                          /* Device Resume channel pgm  */
-        NULL,                          /* Device Suspend channel pgm */
-        &him_halt_device,              /* Device Halt channel pgm    */
-        NULL,                          /* Device Read                */
-        NULL,                          /* Device Write               */
-        NULL,                          /* Device Query used          */
-        NULL,                          /* Device Reserve             */
-        NULL,                          /* Device Release             */
-        NULL,                          /* Device Attention           */
-        NULL,                          /* Immediate CCW Codes        */
-        NULL,                          /* Signal Adapter Input       */
-        NULL,                          /* Signal Adapter Output      */
-        NULL,                          /* Signal Adapter Sync        */
-        NULL,                          /* Signal Adapter Output Mult */
-        NULL,                          /* QDIO subsys desc           */
-        NULL,                          /* QDIO set subchan ind       */
-        NULL,                          /* Hercules suspend           */
-        NULL                           /* Hercules resume            */
+    &him_init_handler,                 /* Device Initialisation      */
+    &him_execute_ccw,                  /* Device CCW execute         */
+    &him_close_device,                 /* Device Close               */
+    &him_query_device,                 /* Device Query               */
+    NULL,                              /* Device Extended Query      */
+    NULL,                              /* Device Start channel pgm   */
+    &him_cpe_device,                   /* Device End channel pgm     */
+    NULL,                              /* Device Resume channel pgm  */
+    NULL,                              /* Device Suspend channel pgm */
+    &him_halt_device,                  /* Device Halt channel pgm    */
+    NULL,                              /* Device Read                */
+    NULL,                              /* Device Write               */
+    NULL,                              /* Device Query used          */
+    NULL,                              /* Device Reserve             */
+    NULL,                              /* Device Release             */
+    NULL,                              /* Device Attention           */
+    NULL,                              /* Immediate CCW Codes        */
+    NULL,                              /* Signal Adapter Input       */
+    NULL,                              /* Signal Adapter Output      */
+    NULL,                              /* Signal Adapter Sync        */
+    NULL,                              /* Signal Adapter Output Mult */
+    NULL,                              /* QDIO subsys desc           */
+    NULL,                              /* QDIO set subchan ind       */
+    NULL,                              /* Hercules suspend           */
+    NULL                               /* Hercules resume            */
 };
+
 
 /* Libtool static name colision resolution */
 /* note : lt_dlopen will look for symbol & modulename_LTX_symbol */
@@ -891,7 +903,7 @@ HDL_DEVICE_SECTION;
 }
 END_DEVICE_SECTION
 
- 
+
 /*-------------------------------------------------------------------*/
 /* When MTS wants to start using a particular subchannel it sends    */
 /* out an EBCDIC character string that indicates how the subchannel  */
@@ -908,26 +920,28 @@ static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data
     struct config_reply *reply_ptr;
     static unsigned char Ok[] = {0xd6, 0x92},           /* in EBCDIC */
         Failed[] = {0xc6, 0x81, 0x89, 0x93, 0x85, 0x84};
- 
+
     cd_len = ntohs( ((struct buff_hdr *) config_data)->buffer_length );
- 
+
     /* Build the reply right on top of the configuration data */
     reply_ptr = (struct config_reply *) config_data;
 
-    if ( cb_ptr->state != SHUTDOWN)
+    if ( cb_ptr->state != SHUTDOWN )
     {
-        /* This really should be an error, but MTS is bad about not properly 
+        /* This really should be an error, but MTS is bad about not properly
            closing Him devices when it's done with them (especially MSource
            devices */
            debug_pf( "Config record in active state, reseting device\n" );
            reset_io_cb( cb_ptr );
+
     }
-    
-    if (!parse_config_data( cb_ptr, (char *) &config_data[4], cd_len) )
+
+    if ( !parse_config_data( cb_ptr, (char *) &config_data[4], cd_len) )
     {
         if ( cb_ptr->sock > 0 )
             (void) close_socket( cb_ptr->sock );
         goto failed;
+
     }
     else
     {                              /* Set up socket for non-servers. */
@@ -937,7 +951,7 @@ static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data
                 get_socket( dev, cb_ptr->protocol, cb_ptr->bind_addr,
                     cb_ptr->mts_header.sh.tcp_header.th_dport,
                     &cb_ptr->sin, cb_ptr->passive ? QLEN : 0 );
-            if (cb_ptr->sock < 0)
+            if ( cb_ptr->sock < 0 )
                 goto failed;
 
             /* Save the address we're bound to */
@@ -945,25 +959,30 @@ static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data
                 cb_ptr->our_addr = cb_ptr->sin.sin_addr.s_addr;
             /*  Set the destination port in the MTS header as well   */
             cb_ptr->mts_header.sh.tcp_header.th_dport = cb_ptr->sin.sin_port;
+
         }
         else if ( cb_ptr->server &&
-                  cb_ptr->mts_header.sh.tcp_header.th_dport == 0 )
+            cb_ptr->mts_header.sh.tcp_header.th_dport == 0 )
+
         {
             // A server listening on port zero
-            if (cb_ptr->protocol == IPPROTO_UDP) {
-                if (add_UDP_server_listener( dev, cb_ptr ) < 0)
+            if ( cb_ptr->protocol == IPPROTO_UDP )
+            {
+                if ( add_UDP_server_listener( dev, cb_ptr ) < 0 )
                 {
                     goto failed;
+
                 }
             }
             else {
-                if (add_TCP_server_listener( dev, cb_ptr ) < 0)
+                if ( add_TCP_server_listener( dev, cb_ptr ) < 0 )
                 {
                     goto failed;
+
                 }
             }
         }
- 
+
         /* Finish initializing the configuration command reply       */
         memset( (char *) reply_ptr, '\0', sizeof( struct config_reply ) );
         reply_ptr->him_hdr.bh_flags = BH_INIT;
@@ -981,7 +1000,7 @@ static void config_subchan( DEVBLK *dev, struct io_cb *cb_ptr, BYTE *config_data
         set_state( cb_ptr, INITIALIZED );
     }
     return;
-    
+
 failed:
     reset_io_cb(cb_ptr);
 
@@ -993,20 +1012,21 @@ failed:
 
 } /* end function config_subchan */
 
+
 /*-------------------------------------------------------------------*/
 /* This routine resets the HIM data to the intial state              */
 /*-------------------------------------------------------------------*/
-static void reset_io_cb(struct io_cb *cb_ptr) 
+static void reset_io_cb( struct io_cb *cb_ptr )
 {
     in_addr_t bind_addr;
 
     // If this is a server waiting for a call, terminate the wait
     if ( cb_ptr->server && cb_ptr->state == INITIALIZED )
     {
-            if (cb_ptr->protocol == IPPROTO_TCP)
-                remove_TCP_server_listener( cb_ptr );
-            else
-                remove_UDP_server_listener( cb_ptr );
+        if ( cb_ptr->protocol == IPPROTO_TCP )
+            remove_TCP_server_listener( cb_ptr );
+        else
+            remove_UDP_server_listener( cb_ptr );
     }
 
     bind_addr = cb_ptr->bind_addr;
@@ -1017,7 +1037,10 @@ static void reset_io_cb(struct io_cb *cb_ptr)
     cb_ptr->sock = 0;
     cb_ptr->bind_addr = bind_addr;
     cb_ptr->state = SHUTDOWN;
-}
+
+} /* end function reset_io_cb */
+
+
 /*-------------------------------------------------------------------*/
 /* This routine uses the configuration string that MTS sends to      */
 /* initialize the TCP/IP header in the I/O control block. An example */
@@ -1031,18 +1054,18 @@ static int parse_config_data( struct io_cb *cb_ptr,
     char *lhs_token, *rhs_token = NULL, *echo_rhs = NULL;
     int port, i, j, success = 1;
     in_addr_t ip_addr = INADDR_ANY;
- 
+
     enum lhs_codes {LHS_TYPE, LHS_PROTOCOL, LHS_ACTIVE, LHS_PASSIVE,
                     LHS_LOCALSOCK, LHS_FOREIGNSOCK, LHS_SERVER};
- 
+
     static char *lhs_tbl[] = {
         "type",         "protocol",       "active",    "passive",
         "local_socket", "foreign_socket", "server"};
-  
+
     /*---------------------------------------------------------------*/
     /* Build an MTS TCP/IP header                                    */
     /*---------------------------------------------------------------*/
- 
+
     cb_ptr->mts_header.him_hdr.buffer_number = 1;
     cb_ptr->mts_header.him_hdr.buffer_length = htons( 40 );
 
@@ -1058,7 +1081,7 @@ static int parse_config_data( struct io_cb *cb_ptr,
     cb_ptr->mts_header.sh.tcp_header.th_off = 5;
     cb_ptr->mts_header.sh.tcp_header.th_flags = TH_ACK;
     cb_ptr->mts_header.sh.tcp_header.th_win = htons( 6 * 4096 );
- 
+
     /*---------------------------------------------------------------*/
     /* Now, convert the EBCDIC configuration command that MTS just   */
     /* sent to ASCII, parse the string and use that information to   */
@@ -1071,45 +1094,45 @@ static int parse_config_data( struct io_cb *cb_ptr,
         config_string[cs_len] = tolower( guest_to_host( (u_char)config_string[cs_len] ) );
 
     lhs_token = strtok( config_string, " =" );
- 
+
     do {
-        for ( i = 0; ( strcmp( lhs_token, lhs_tbl[i] ) != 0 ) && i < LHS_SERVER; i++ );
- 
+        for ( i = 0; ( strcmp( lhs_token, lhs_tbl[i] ) != 0 ) && i < LHS_SERVER; i++ ) ;
+
         switch( i ) {
         case LHS_TYPE:
             echo_rhs = rhs_token = strtok( NULL, " =" );
             break;
- 
+
         case LHS_PROTOCOL:
             echo_rhs = rhs_token = strtok( NULL, " =" );
             cb_ptr->mts_header.ip_header.ip_p = cb_ptr->protocol =
                 strcmp(rhs_token, "udp") == 0 ? IPPROTO_UDP : IPPROTO_TCP;
             break;
- 
+
         case LHS_ACTIVE:
         case LHS_PASSIVE:
             echo_rhs = rhs_token = NULL;
             cb_ptr->passive = ( i == LHS_PASSIVE );
             break;
- 
+
         case LHS_LOCALSOCK:
         case LHS_FOREIGNSOCK:
             echo_rhs = rhs_token = strtok( NULL, " =" );
             rhs_token++;
             port = strtol( rhs_token, &rhs_token, 10 );
- 
+
             for ( j = 0; j < 4; j++ )
             {
                 rhs_token++;
                 ip_addr = ( ip_addr << 8 ) | strtol( rhs_token, &rhs_token, 10 );
             }
- 
+
             if ( i == LHS_LOCALSOCK )     /* Set local socket values */
             {
                 /* use provided address, address we're bound to, or address
                    requested in device config, whichever is specified. */
                 cb_ptr->mts_header.ip_header.Ip_Dst =
-                   ip_addr != INADDR_ANY ? ip_addr : 
+                   ip_addr != INADDR_ANY ? ip_addr :
                    (cb_ptr->our_addr != INADDR_ANY ? cb_ptr->our_addr :
                    cb_ptr->bind_addr);
                 cb_ptr->mts_header.sh.tcp_header.th_dport = htons( port );
@@ -1120,25 +1143,26 @@ static int parse_config_data( struct io_cb *cb_ptr,
                 cb_ptr->mts_header.sh.tcp_header.th_sport = htons( port );
             }
             break;
- 
+
         case LHS_SERVER:
             echo_rhs = rhs_token = NULL;
             cb_ptr->server = 1;
             break;
         } /* end switch( i ) */
- 
+
         if ( echo_rhs == NULL )
             debug_pf( " %s, no right hand side\n", lhs_token );
 
         else
             debug_pf( " %s = %s\n", lhs_token, echo_rhs );
- 
+
     } while ( (lhs_token = strtok( NULL, " =" )) );
 
     return success;
+
 } /* end function parse_config_data */
- 
- 
+
+
 /*-------------------------------------------------------------------*/
 /* Get_Socket - allocate & bind a socket using TCP or UDP            */
 /* Returns -2 for adrress in use error and -1 for any other error    */
@@ -1149,20 +1173,20 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
     /* int protocol;              * protocol to use ("IPPROTO_TCP" or "IPPROTO_UDP") *
        int port;                  * Port number to use (in net order) or       *
                                     0 for any port                             *
-       in_addr_t bind_addr        * Address to bind ot or INADDR_ANY           * 
+       in_addr_t bind_addr        * Address to bind ot or INADDR_ANY           *
        struct sockaddr_in *sin;   * will be returned with assigned port        *
        int qlen;                  * maximum length of the server request queue */
        int rc;
- 
+
     int s, socktype, optval;  /* socket descriptor and socket type   */
     struct sockaddr_in our_sin;
     unsigned int sinlen = sizeof( struct sockaddr_in );
- 
+
     memset( (char *)&our_sin, '\0', sizeof( struct sockaddr_in ) );
     our_sin.sin_family = AF_INET;
     our_sin.sin_port = port;
     our_sin.sin_addr.s_addr = bind_addr;
- 
+
     /* Use protocol to choose a socket type */
     socktype = protocol == IPPROTO_UDP ? SOCK_DGRAM : SOCK_STREAM;
 
@@ -1175,17 +1199,17 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
         WRMSG( HHC01150, "E", LCSS_DEVNUM, "socket()", strerror( HSO_errno ));
         return -1;
     }
- 
+
     /* Set REUSEADDR option */
     optval = 4;
     if ( setsockopt( s, SOL_SOCKET, SO_REUSEADDR, (GETSET_SOCKOPT_T*)&optval, sizeof( optval ) ) < 0 )
-    {    
+    {
         // ""%1d:%04X HIM: Error in function %s: %s"
         WRMSG( HHC01150, "E", LCSS_DEVNUM, "setsockopt()", strerror( HSO_errno ));
         close_socket(s);
         return -1;
     }
- 
+
     /* Bind the socket */
     if ( bind( s, (struct sockaddr *)&our_sin, sizeof( struct sockaddr_in ) ) < 0 )
     {
@@ -1195,7 +1219,7 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
         close_socket(s);
         return rc == HSO_EADDRINUSE ? -2 : -1;
     }
- 
+
     /* Retrieve complete socket info */
     if ( getsockname( s, (struct sockaddr *)&our_sin, &sinlen ) < 0 )
     {
@@ -1206,7 +1230,7 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
     }
     else
         debug_pf( "In get_socket(), port = %d\n", ntohs(our_sin.sin_port) );
- 
+
     if ( socktype == SOCK_STREAM && qlen && listen( s, qlen ) < 0 )
     {
         // ""%1d:%04X HIM: Error in function %s: %s"
@@ -1214,10 +1238,10 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
         close_socket(s);
         return -1;
     }
- 
+
     if ( sin != NULL )
         memcpy( sin, (char *)&our_sin, sizeof( struct sockaddr_in ) );
- 
+
     return s;
 
 } /* end function get_socket */
@@ -1243,7 +1267,8 @@ static int return_mss( struct io_cb *cb_ptr, struct packet_hdr *mss )
     mss->tcp_optval = htons( 1460 );
 
     return sizeof( struct packet_hdr );
-}
+
+} /* end function return_mss */
 
 
 /*-------------------------------------------------------------------*/
@@ -1263,7 +1288,9 @@ static int start_sock_thread( DEVBLK* dev )
         return 0;
     }
     return 1;
-}
+
+} /* end function start_sock_thread */
+
 
 /*-------------------------------------------------------------------*/
 /* Thread to monitor our IP socket for incoming data                 */
@@ -1305,23 +1332,23 @@ static void* skt_thread( void* arg )
 
 
 /*-------------------------------------------------------------------*/
-/* Increment the count of TCP server devices listening                   */
+/* Increment the count of TCP server devices listening               */
 /*-------------------------------------------------------------------*/
 static int add_TCP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
 {
     /* Increment the count of the number of HIM devices waiting
-       for a server TCP connection and start the listener thread if 
+       for a server TCP connection and start the listener thread if
        it is not running.
     */
-    
+
     TID tid;
     int rc;
 
     obtain_lock( &TCPServerLock );
-    
+
     // Increment the count of devices listening
     TCPServerCount++;
-    
+
     // Start the listener thread if it is not running.
     if ( !TCPServerThreadRunning )
     {
@@ -1331,7 +1358,7 @@ static int add_TCP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
         sslta->cb_ptr = cb_ptr;
 
         /* First one, start the thread to listen for a connection */
-        rc = create_thread( &tid, DETACHED, TCP_sserver_listen_thread, 
+        rc = create_thread( &tid, DETACHED, TCP_sserver_listen_thread,
                      sslta, "TCP_listener" );
         if ( rc )
         {
@@ -1343,28 +1370,31 @@ static int add_TCP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
         }
         TCPServerThreadRunning = 1;
     }
+
     release_lock( &TCPServerLock );
     return 1;
-}
+
+} /* end function add_TCP_server_listener */
+
 
 /*-------------------------------------------------------------------*/
-/* Increment the count of UDP server devices listening                   */
+/* Increment the count of UDP server devices listening               */
 /*-------------------------------------------------------------------*/
 static int add_UDP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
 {
     /* Increment the count of the number of HIM devices waiting
-       for a server UDP connection and start the listener thread if 
+       for a server UDP connection and start the listener thread if
        it is not running.
     */
-    
+
     TID tid;
     int rc;
 
     obtain_lock( &UDPServerLock );
-    
+
     // Increment the count of devices listening
     UDPServerCount++;
-    
+
     // Start the listener thread if it is not running.
     if ( !UDPServerThreadRunning )
     {
@@ -1374,7 +1404,7 @@ static int add_UDP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
         sslta->cb_ptr = cb_ptr;
 
         /* First one, start the thread to listen for a connection */
-        rc = create_thread( &tid, DETACHED, UDP_sserver_listen_thread, 
+        rc = create_thread( &tid, DETACHED, UDP_sserver_listen_thread,
                      sslta, "UDP_listener" );
         if ( rc )
         {
@@ -1386,12 +1416,15 @@ static int add_UDP_server_listener( DEVBLK *dev, struct io_cb *cb_ptr )
         }
         UDPServerThreadRunning = 1;
     }
+
     release_lock( &UDPServerLock );
     return 1;
-}
+
+} /* end function add_UDP_server_listener */
+
 
 /*-------------------------------------------------------------------*/
-/* Change the state of the donnection                                */
+/* Change the state of the connection                                */
 /*-------------------------------------------------------------------*/
 static void set_state( struct io_cb *cb_ptr, t_state state )
 {
@@ -1400,78 +1433,84 @@ static void set_state( struct io_cb *cb_ptr, t_state state )
     if ( cb_ptr->server &&
          cb_ptr->state == INITIALIZED && state != INITIALIZED )
     {
-        if (cb_ptr->protocol == IPPROTO_TCP)
+        if ( cb_ptr->protocol == IPPROTO_TCP )
             remove_TCP_server_listener( cb_ptr );
         else
             remove_UDP_server_listener( cb_ptr );
     }
-    
+
     cb_ptr->state = state;
-}
+
+} /* end function set_state */
+
 
 /*-------------------------------------------------------------------*/
-/* Decrement the count of TCP server devices listening                  */
+/* Decrement the count of TCP server devices listening               */
 /*-------------------------------------------------------------------*/
 static int remove_TCP_server_listener( struct io_cb *cb_ptr )
 {
     UNREFERENCED( cb_ptr );
-    
+
     /* Decrement the count of HIM devices waiting for a server connection.
        If the count goes to zero the listener thread will notice and stop.
     */
-    
+
     obtain_lock( &TCPServerLock );
-    
+
     // Decrement the count of devices listening
     TCPServerCount--;
-    
+
     // Don't let it be less than zero
     if ( TCPServerCount < 0 )
         TCPServerCount = 0;
-    
+
     release_lock( &TCPServerLock );
     return 1;
-}
+
+} /* end function remove_TCP_server_listener */
+
 
 /*-------------------------------------------------------------------*/
-/* Decrement the count of UDP server devices listening                  */
+/* Decrement the count of UDP server devices listening               */
 /*-------------------------------------------------------------------*/
 static int remove_UDP_server_listener( struct io_cb *cb_ptr )
 {
     UNREFERENCED( cb_ptr );
-    
+
     /* Decrement the count of HIM devices waiting for a server connection.
        If the count goes to zero the listener thread will notice and stop.
     */
-    
+
     obtain_lock( &UDPServerLock );
-    
+
     // Decrement the count of devices listening
     UDPServerCount--;
-    
+
     // Don't let it be less than zero
     if ( UDPServerCount < 0 )
         UDPServerCount = 0;
-    
+
     release_lock( &UDPServerLock );
     return 1;
-}
+
+} /* end function remove_UDP_server_listener */
+
 
 /*-------------------------------------------------------------------*/
-/* Thread to listen for incoming TCP server connections                  */
+/* Thread to listen for incoming TCP server connections              */
 /*-------------------------------------------------------------------*/
 static void* TCP_sserver_listen_thread( void* arg )
-{   
+{
     /* Table of ports to listen on.  This should agree with the
        contents of HOST:SPVT_LCS*SQ on MTS.  This maps port numbers
        to MTS server names.  If a connection is made on a port not
-       in this table a server named "TCPnnn" will be started. 
-       
+       in this table a server named "TCPnnn" will be started.
+
        Here is the info from SPVT and NSERVTBL for TCP ports
-       
+
        TCP ports in SPVT
         7       Echo
-        9       Discard 
+        9       Discard
         20      FTP-Data
         23      Telnet
         25      SMTP    POST:SMTP-CMD
@@ -1486,7 +1525,7 @@ static void* TCP_sserver_listen_thread( void* arg )
         2110    POP3Test POP:POP3.TEST
         3217    (blank server name) LPDO
         4242    Testing
-        
+
         TCP Ports not in SPVT
         2025            POST,POST:SMTP-TEST
         2026            MOC.:check_vitals
@@ -1494,15 +1533,16 @@ static void* TCP_sserver_listen_thread( void* arg )
         9998            ASRV:ACCSERV*C
 
     */
+
     #define TCP_PORT_COUNT 17
-    u_short ports[TCP_PORT_COUNT] = {23, 25, 79, 109, 110, 143, 220, 1010, 
+    u_short ports[TCP_PORT_COUNT] = {23, 25, 79, 109, 110, 143, 220, 1010,
                     1011, 1309, 2110, 3217, 4242, 2025, 2026, 2110, 9998};
     int sockets[TCP_PORT_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     int max_socket = 0;
     int i, j;
-    
+
     fd_set socket_set;      /* set of sockets to listen on */
-    
+
     /* Retrieve arguments */
     SSLTA* sslta = arg;
     DEVBLK *dev           = sslta->dev;
@@ -1511,12 +1551,12 @@ static void* TCP_sserver_listen_thread( void* arg )
 
     max_socket = 0;
     FD_ZERO( &socket_set );
-    for (i=0; i<TCP_PORT_COUNT; i++)
+    for ( i = 0; i < TCP_PORT_COUNT; i++ )
     {
         int s;
         s = get_socket( dev, IPPROTO_TCP, cb_ptr->bind_addr, htons( ports[i] ),
-                        NULL, QLEN ); 
-        if  ( s<0 )
+                        NULL, QLEN );
+        if  ( s < 0 )
         {
             /* Couldn't get a socket, skip it, a message will have sent */
             sockets[i] = 0;
@@ -1524,7 +1564,7 @@ static void* TCP_sserver_listen_thread( void* arg )
         else
         {
             sockets[i] = s;
-            if ( s>max_socket )
+            if ( s > max_socket )
                 max_socket = s;
             FD_SET( s, &socket_set );
             /* Make it non-blocking since we don't want to wait while
@@ -1532,21 +1572,21 @@ static void* TCP_sserver_listen_thread( void* arg )
             socket_set_blocking_mode( s, 0 );
         }
     }
-    
+
     /* Listen for an incoming connection until there are no more servers */
-    for (;;)
+    for ( ; ; )
     {
         struct timespec slowpoll = { 0, 100000000 };         /* 100ms */
         fd_set listen_set;
         int rc;
         struct io_cb *cb_ptr;
-        
+
         /* See if we should quit */
         obtain_lock( &TCPServerLock );
         if ( TCPServerCount == 0 )
         {
             /* We're done, clean up and go home */
-            for (i=0; i<TCP_PORT_COUNT; i++)
+            for ( i = 0; i < TCP_PORT_COUNT; i++ )
             {
                 if ( sockets[i] != 0 )
                     (void) close_socket( sockets[i] );
@@ -1555,41 +1595,44 @@ static void* TCP_sserver_listen_thread( void* arg )
             TCPServerThreadRunning = 0;
             release_lock( &TCPServerLock );
             break;  // and exit
+
         }
+
         release_lock( &TCPServerLock );
-    
+
         listen_set = socket_set;
         rc = pselect ( max_socket+1, &listen_set, NULL, NULL, &slowpoll, NULL);
-        
+
         if ( rc == 0 )
             /* Nothing ready */
             continue;
-            
-        if ( rc < 0)
+
+        if ( rc < 0 )
         {
             // ""%1d:%04X HIM: Error in function %s: %s"
             WRMSG( HHC01150, "E", LCSS_DEVNUM, "pselect()", strerror( HSO_errno ));
-            usleep( 50000 ); // (wait a bit; maybe it'll fix itself??)            
+            usleep( 50000 ); // (wait a bit; maybe it'll fix itself??)
             continue;
+
         }
-        
+
         /* See which ports have pending connections */
-        for (i=0; i<TCP_PORT_COUNT; i++)
+        for ( i = 0; i < TCP_PORT_COUNT; i++ )
         {
-            if ( FD_ISSET( sockets[i], &listen_set ))
+            if ( FD_ISSET( sockets[i], &listen_set ) )
             {
                 /* Pending connection, find a HIM device for it */
                 DEVBLK *dev;
                 int csock;
                 struct sockaddr_in our_sin;
                 unsigned int sinlen = sizeof( struct sockaddr_in );
-                
-                for (dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev)
+
+                for ( dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev )
                 {
-                    if (dev->allocated && dev->himdev)
+                    if ( dev->allocated && dev->himdev )
                     {
                         /* Seems to be a HIM device, take a closer look. */
-                        if (try_obtain_lock( &dev->lock ))
+                        if ( try_obtain_lock( &dev->lock ) )
                             /* Couldn't lock device, skip it */
                             continue;
                         /* Now that it's locked see if it is a server HIM
@@ -1607,25 +1650,26 @@ static void* TCP_sserver_listen_thread( void* arg )
                         release_lock( &dev->lock );
                     }
                 }   // End of device loop
-                if (dev == 0)
+
+                if ( dev == 0 )
                 {
                     /* couldn't find a device.  This shouldn't happen, but if
                        it does just try again later. */
                     usleep( 100000); /* wait 1/10 second */
                     break;           /* back to the port loop */
                 }
-                
+
                 /* Accept the connection and assign the socket to
                    the waiting HIM device.  The device is locked. */
-                csock = accept( sockets[i], 
-                                (struct sockaddr *)&cb_ptr->sin, 
+                csock = accept( sockets[i],
+                                (struct sockaddr *)&cb_ptr->sin,
                                 &sinlen);
 
-                if (csock < 0)
+                if ( csock < 0 )
                 {
                     /* accept failed, see why */
                     int accept_errno = HSO_errno; // (preserve orig errno)
-                    if (EINTR != accept_errno && HSO_EWOULDBLOCK != accept_errno )
+                    if ( EINTR != accept_errno && HSO_EWOULDBLOCK != accept_errno )
                     {
                         // ""%1d:%04X HIM: Error in function %s: %s"
                         WRMSG( HHC01150, "E", LCSS_DEVNUM, "accept()", strerror( accept_errno ));
@@ -1633,11 +1677,13 @@ static void* TCP_sserver_listen_thread( void* arg )
                     }
                     release_lock( &dev->lock );
                     continue;   // Loop over ports
+
                 }
+
                 /* have a connection socket, do something with it */
                 set_state( cb_ptr, CONNECTED );
                 cb_ptr->sock = csock;
- 
+
                 // Save the address and port of the remote host
                 cb_ptr->mts_header.ip_header.ip_src = cb_ptr->sin.Sin_Addr;
                 cb_ptr->mts_header.sh.tcp_header.th_sport = cb_ptr->sin.sin_port;
@@ -1647,66 +1693,70 @@ static void* TCP_sserver_listen_thread( void* arg )
                     // ""%1d:%04X HIM: Error in function %s: %s"
                     WRMSG( HHC01150, "W", LCSS_DEVNUM, "getsockname()", strerror( HSO_errno ));
                 }
+
                 cb_ptr->mts_header.ip_header.ip_dst = our_sin.Sin_Addr;
                 cb_ptr->mts_header.sh.tcp_header.th_dport = our_sin.sin_port;
-                
+
                 /* Queue an MSS acknowledgement */
                 for ( j = 0; cb_ptr->read_q[j] != EMPTY; j++ ) ;
                 cb_ptr->read_q[j] = MSS;
-                
+
                 /* Unlock the device and queue an attention interrupt */
                 release_lock( &dev->lock );
                 /* This MTS job is no longer waiting for a call. */
-                remove_TCP_server_listener(cb_ptr);                
+                remove_TCP_server_listener(cb_ptr);
                 rc = device_attention (dev, CSW_ATTN);
                 ((struct io_cb *)dev->dev_data)->attn_rc[rc]++;
             }
         }
     }
+
     return 0;
-}
+
+} /* end function TCP_sserver_listen_thread */
+
 
 /*-------------------------------------------------------------------*/
-/* Thread to listen for incoming UDP server connections                  */
+/* Thread to listen for incoming UDP server connections              */
 /*-------------------------------------------------------------------*/
 static void* UDP_sserver_listen_thread( void* arg )
-{   
+{
     /* Table of ports to listen on.  This should agree with the
        contents of HOST:SPVT_LCS*SQ on MTS.  This maps port numbers
        to MTS server names.  If a connection is made on a port not
-       in this table a server named "UDPnnn" will be started. 
-       
-       Here is the info from SPVT and NSERVTBL for UDP ports
-       
-        (None in SPVT)
-        7		UDP.:ECHO*C
-        9		UDP.:DISCARD*C
-        11		UDP.:USERS*C
-        13		UDP.:DAYTIME*C
-        15		UDP.:NETSTAT*C
-        17		UDP.:QUOTE*C
-        19		UDP.:CHARGEN*C
-        37		UDP.:TIME*C
-        42		UDP.:NAMESERV*C
-        53		UDP.:DOMAIN*C
-        59		UDP.:MACEFSIP*C
-        69		UDP.:TFTP*C
-        79		UDP.:FINGER*C
-        123		UDP.:NTP*C
-        129		UDP.:PWDGEN*C
-        424     AUTH,AUTH:UDPSERV
+       in this table a server named "UDPnnn" will be started.
 
+       Here is the info from SPVT and NSERVTBL for UDP ports
+
+        (None in SPVT)
+        7               UDP.:ECHO*C
+        9               UDP.:DISCARD*C
+        11              UDP.:USERS*C
+        13              UDP.:DAYTIME*C
+        15              UDP.:NETSTAT*C
+        17              UDP.:QUOTE*C
+        19              UDP.:CHARGEN*C
+        37              UDP.:TIME*C
+        42              UDP.:NAMESERV*C
+        53              UDP.:DOMAIN*C
+        59              UDP.:MACEFSIP*C
+        69              UDP.:TFTP*C
+        79              UDP.:FINGER*C
+        123             UDP.:NTP*C
+        129             UDP.:PWDGEN*C
+        424             AUTH,AUTH:UDPSERV
     */
+
     #define UDP_PORT_COUNT 15
-    u_short ports[UDP_PORT_COUNT] = {7, 9, 11, 13, 15, 17, 19, 37, 42, 53, 59, 
+    u_short ports[UDP_PORT_COUNT] = {7, 9, 11, 13, 15, 17, 19, 37, 42, 53, 59,
                                     69, 79, 123, 129};
     int sockets[UDP_PORT_COUNT] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     int max_socket = 0;
     int i;
     int retry_count;
-    
+
     fd_set socket_set;      /* set of sockets to listen on */
-    
+
     /* Retrieve arguments */
     SSLTA* sslta = arg;
     DEVBLK *dev           = sslta->dev;
@@ -1716,16 +1766,16 @@ static void* UDP_sserver_listen_thread( void* arg )
     max_socket = 0;
     FD_ZERO( &socket_set );
     retry_count = 0;
-    
+
     /* Listen for an incoming connection until there are no more servers */
-    for (;;)
+    for ( ; ; )
     {
         /* See if we should quit */
         obtain_lock( &UDPServerLock );
         if ( UDPServerCount == 0 )
         {
             /* We're done, clean up and go home */
-            for (i=0; i<UDP_PORT_COUNT; i++)
+            for ( i=0; i<UDP_PORT_COUNT; i++ )
             {
                 if ( sockets[i] != 0 )
                     (void) close_socket( sockets[i] );
@@ -1736,18 +1786,18 @@ static void* UDP_sserver_listen_thread( void* arg )
             break;  // and exit
         }
         release_lock( &UDPServerLock );
-    
+
         /* get a socket for any missing port */
-        for (i=0; i<UDP_PORT_COUNT; i++)
+        for ( i = 0; i < UDP_PORT_COUNT; i++ )
         {
-            if (sockets[i] == 0 || (sockets[i] < 0 && retry_count <= 0)) {
+            if ( sockets[i] == 0 || (sockets[i] < 0 && retry_count <= 0) ) {
                 int s;
                 s = get_socket( dev, IPPROTO_UDP, cb_ptr->bind_addr, htons( ports[i] ),
-                                NULL, QLEN ); 
-                if  ( s<0 )
+                                NULL, QLEN );
+                if  ( s < 0 )
                 {
                     /* Couldn't get a socket, skip it, a message will have sent */
-                    if (s == -1)
+                    if ( s == -1 )
                         /* A fatal error, don't try again soon */
                         sockets[i] = -1;
                     else
@@ -1767,33 +1817,34 @@ static void* UDP_sserver_listen_thread( void* arg )
             }
         }
         /* Adjust the retry count that controls how oftern we retry failures */
-        if (--retry_count <0)
+        if ( --retry_count < 0 )
             retry_count = 10;
-            
+
         struct timespec slowpoll = { 0, 100000000 };         /* 100ms */
         fd_set listen_set;
         int rc;
         struct io_cb *cb_ptr;
-        
+
         listen_set = socket_set;
-        rc = pselect ( max_socket+1, &listen_set, NULL, NULL, &slowpoll, NULL);
-        
+        rc = pselect ( max_socket+1, &listen_set, NULL, NULL, &slowpoll, NULL );
+
         if ( rc == 0 )
             /* Nothing ready */
             continue;
-            
-        if ( rc < 0)
+
+        if ( rc < 0 )
         {
             // ""%1d:%04X HIM: Error in function %s: %s"
             WRMSG( HHC01150, "E", LCSS_DEVNUM, "pselect()", strerror( HSO_errno ));
-            usleep( 50000 ); // (wait a bit; maybe it'll fix itself??)            
+            usleep( 50000 ); // (wait a bit; maybe it'll fix itself??)
             continue;
+
         }
-        
+
         /* See which ports have pending input */
-        for (i=0; i<UDP_PORT_COUNT; i++)
+        for ( i = 0; i < UDP_PORT_COUNT; i++ )
         {
-            if ( sockets[i] > 0 && FD_ISSET( sockets[i], &listen_set ))
+            if ( sockets[i] > 0 && FD_ISSET( sockets[i], &listen_set ) )
             {
                 /* incoming data, find a HIM device for it */
                 DEVBLK *dev;
@@ -1801,13 +1852,13 @@ static void* UDP_sserver_listen_thread( void* arg )
                 struct sockaddr_in our_sin;
                 unsigned int sinlen = sizeof( struct sockaddr_in );
                 char shortbuf[32];
-                
-                for (dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev)
+
+                for ( dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev )
                 {
-                    if (dev->allocated && dev->himdev)
+                    if ( dev->allocated && dev->himdev )
                     {
                         /* Seems to be a HIM device, take a closer look. */
-                        if (try_obtain_lock( &dev->lock ))
+                        if ( try_obtain_lock( &dev->lock ) )
                             /* Couldn't lock device, skip it */
                             continue;
                         /* Now that it's locked see if it is a server HIM
@@ -1818,13 +1869,13 @@ static void* UDP_sserver_listen_thread( void* arg )
                              cb_ptr->server &&
                              cb_ptr->state == INITIALIZED &&
                              cb_ptr->protocol == IPPROTO_UDP &&
-                             cb_ptr->sock <= 0
-                             )
+                             cb_ptr->sock <= 0 )
                             break;      // from device loop
                         release_lock( &dev->lock );
                     }
                 }   // End of device loop
-                if (dev == 0)
+
+                if ( dev == 0 )
                 {
                     /* couldn't find a device.  This shouldn't happen, but if
                        it does just try again later. */
@@ -1837,8 +1888,8 @@ static void* UDP_sserver_listen_thread( void* arg )
                 /* have a connection socket, do something with it */
                 set_state( cb_ptr, CONNECTED );
                 cb_ptr->sock = csock;
- 
-                // Peek at the first packet since it contains the 
+
+                // Peek at the first packet since it contains the
                 // IP address and port number of the source
                 (void) recvfrom( cb_ptr->sock, shortbuf, 32, MSG_PEEK,
                     (struct sockaddr *)&cb_ptr->sin, &sinlen );
@@ -1854,18 +1905,22 @@ static void* UDP_sserver_listen_thread( void* arg )
                 }
                 cb_ptr->mts_header.ip_header.ip_dst = our_sin.Sin_Addr;
                 cb_ptr->mts_header.sh.udp_header.uh_dport = our_sin.sin_port;
-                
+
                 /* Unlock the device and queue an attention interrupt */
                 release_lock( &dev->lock );
                 /* This MTS job is no longer waiting for a call. */
-                remove_UDP_server_listener(cb_ptr);                
+                remove_UDP_server_listener(cb_ptr);
                 rc = device_attention (dev, CSW_ATTN);
                 ((struct io_cb *)dev->dev_data)->attn_rc[rc]++;
+
             }
         }
     }
+
     return 0;
-}
+
+} /* end function UDP_sserver_listen_thread */
+
 
 /*-------------------------------------------------------------------*/
 /* Used for dumping debugging data in a formatted hexadecimal form   */
@@ -1875,7 +1930,7 @@ static void dumpdata( char *label, BYTE *data, int len )
 #if _ENABLE_TRACING_STMTS_IMPL
     char *hex = "0123456789ABCDEF", ascii_hex[80];
     int index = 0, space_chk = 0;
- 
+
     if ( strlen(label) > 0 )
         debug_pf( "%s: \n", label );
 
@@ -1883,7 +1938,7 @@ static void dumpdata( char *label, BYTE *data, int len )
     {
         debug_pf( "Dumpdata len = %i, will be truncated\n", len );
         len = 256;
-    }   
+    }
 
     while ( len-- > 0 )
     {
@@ -1901,8 +1956,9 @@ static void dumpdata( char *label, BYTE *data, int len )
             index = space_chk = 0;
         }
         data++;
+
     }
- 
+
     ascii_hex[index] = '\0';
     if ( strlen(ascii_hex) > 0 )
         debug_pf( "%s\n", ascii_hex );
@@ -1936,4 +1992,5 @@ static void debug_pf( const char* __fmt, ... )
 #else
     UNREFERENCED( __fmt );
 #endif
+
 } /* end function debug_pf */
