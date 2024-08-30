@@ -173,7 +173,7 @@ static int get_socket( DEVBLK *dev, int protocol, in_addr_t bind_addr, int port,
 static int return_mss( struct io_cb *cb_ptr, struct packet_hdr *mss );
 static int start_sock_thread( DEVBLK* dev );
 static void* skt_thread( void* dev );
-static void debug_pf( __const char *__restrict __fmt, ... );
+static void debug_pf( const char* __fmt, ... );
 static void dumpdata( char *label, BYTE *data, int len );
 static void reset_io_cb( struct io_cb *cb_ptr );
 
@@ -317,9 +317,10 @@ static void him_halt_device( DEVBLK *dev )
 {
     struct timeval tv;
     char   ts_buf[64];
+    time_t secs;
 
-    gettimeofday( &tv, NULL );
-    strftime( ts_buf, sizeof( ts_buf ), "%H:%M:%S", localtime( &tv.tv_sec ) );
+    gettimeofday( &tv, NULL ); secs = tv.tv_sec;
+    strftime( ts_buf, sizeof( ts_buf ), "%H:%M:%S", localtime( &secs ) );
     debug_pf( " %s.%06d -- devnum %04X HALT\n", ts_buf, tv.tv_usec, dev->devnum );
 } /* end function him_halt_device */
 
@@ -380,9 +381,10 @@ static void him_execute_ccw( DEVBLK *dev, BYTE code, BYTE flags,
     {
         struct timeval tv;
         char   ts_buf[64];
+        time_t secs;
 
-        gettimeofday( &tv, NULL );
-        strftime( ts_buf, sizeof( ts_buf ), "%H:%M:%S", localtime( &tv.tv_sec ) );
+        gettimeofday( &tv, NULL ); secs = tv.tv_sec;
+        strftime( ts_buf, sizeof( ts_buf ), "%H:%M:%S", localtime( &secs ) );
         debug_pf( " %s.%06d -- devnum %04X opcode %02X\n", ts_buf, tv.tv_usec, dev->devnum, code );
     }
 
@@ -1799,7 +1801,6 @@ static void* UDP_sserver_listen_thread( void* arg )
                 struct sockaddr_in our_sin;
                 unsigned int sinlen = sizeof( struct sockaddr_in );
                 char shortbuf[32];
-                size_t readlen;
                 
                 for (dev = sysblk.firstdev; dev != NULL; dev = dev->nextdev)
                 {
@@ -1839,7 +1840,7 @@ static void* UDP_sserver_listen_thread( void* arg )
  
                 // Peek at the first packet since it contains the 
                 // IP address and port number of the source
-                readlen = recvfrom( cb_ptr->sock, &shortbuf, 32, MSG_PEEK,
+                (void) recvfrom( cb_ptr->sock, shortbuf, 32, MSG_PEEK,
                     (struct sockaddr *)&cb_ptr->sin, &sinlen );
 
                 // Save the address and port of the remote host
@@ -1916,7 +1917,7 @@ static void dumpdata( char *label, BYTE *data, int len )
 /*-------------------------------------------------------------------*/
 /* Used for writing debug output                                     */
 /*-------------------------------------------------------------------*/
-static void debug_pf( __const char *__restrict __fmt, ... )
+static void debug_pf( const char* __fmt, ... )
 {
 #if _ENABLE_TRACING_STMTS_IMPL
     char write_buf[2000];             /* big enough for an IP packet */
